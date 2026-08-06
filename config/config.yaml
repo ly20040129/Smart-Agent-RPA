@@ -1,0 +1,113 @@
+# ==================== 智能体平台主配置文件 ====================
+
+# ==================== LLM配置 ====================
+llm:
+  # 切换LLM提供商: "zhipuai"(智谱云) 或 "ollama"(本地)
+  provider: "zhipuai"
+
+  # ---- 智谱AI配置（GLM-4-Flash 免费模型）----
+  zhipuai:
+    api_key: "fd68c7a484e8477f8d001c8d0e9a7297.0RNMgaitnZ4vmXjq"     # API key
+    model: "glm-4-flash"                   # 免费模型，速度快
+    # model: "glm-4"                       # 付费模型，能力更强
+    # model: "glm-4-air"                   # 轻量付费模型
+    temperature: 0.1                       # 温度参数(越低越稳定)
+    timeout: 60                            # 超时时间(秒)
+
+  # ---- Ollama本地配置（备用，需要本地部署）----
+  ollama:
+    base_url: "http://localhost:11434"     # Ollama服务地址
+    model: "deepseek-r1:7b"                # 本地模型
+    temperature: 0.1
+    timeout: 120
+
+  # 提示词配置
+  prompts:
+    config_path: "config/prompts.yaml"
+
+# ==================== 浏览器配置 ====================
+browser:
+  headless: false
+  browser_type: "chromium"
+  slow_mo: 100
+  timeout: 30000
+  screenshot_on_error: true
+  args:
+    - "--start-maximized"
+    - "--disable-blink-features=AutomationControlled"
+
+# ==================== 数据处理配置 ====================
+data:
+  output_dir: "data/output"
+  output_format: "xlsx"
+  memory_dir: "data/memory"
+  max_memory_days: 90
+  log_dir: "data/logs"
+  log_level: "INFO"
+
+# ==================== Web界面配置 ====================
+web:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  notification:
+    enabled: true
+    methods:
+      - "web"
+    sound: true
+
+# ==================== 智能体配置 ====================
+agent:
+  max_retries: 3
+  retry_delay: 5
+  auto_handle_exceptions: true
+  exception_notification: true
+  human_in_loop:
+    enabled: true
+    timeout: 300
+    notification_on_wait: true
+
+# ==================== 具体流程配置 ====================
+workflows:
+  wechat_pay_billing:
+    enabled: true
+    schedule: "0 9 * * 1"
+    description: "公众号资金账单获取与处理"
+    wechat_pay_url: "https://pay.weixin.qq.com/"
+    output_template: "data/templates/公众号销售额模板.xlsx"
+  tmall_warehouse:
+    enabled: false
+    schedule: "0 10 1,15 * *"
+    description: "天猫保税仓销售出库明细导入金蝶"
+
+# ==================== 存储配置 ====================
+storage:
+  # ---- Redis配置（cookie持久化、缓存、分布式锁）----
+  redis:
+    enabled: true
+    host: "127.0.0.1"
+    port: 6379
+    db: 0
+    password: ""                           # 无密码留空
+    prefix: "agent:"                       # key前缀
+
+  # ---- MySQL配置（业务数据、任务历史、下载记录）----
+  mysql:
+    enabled: true
+    host: "localhost"
+    port: 3306
+    user: "root"
+    password: "1234"                       # 本地MySQL密码
+    database: "smart_agent"                # 数据库名（自动创建）
+    charset: "utf8mb4"
+
+  # ---- 浏览器持久化配置 ----
+  browser_persistence:
+    # 是否启用cookie持久化（登录态保存到Redis）
+    save_cookies: true
+    # cookie保存的域名标识映射（任务名 → Redis key标识）
+    cookie_domains:
+      公众号资金账单: "wechat_pay"
+      京东XX账号报表: "jd_shop"
+    # 浏览器用户数据目录（本地持久化登录态，补充Redis cookie）
+    user_data_dir: "data/browser_profile"

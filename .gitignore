@@ -1,0 +1,24 @@
+
+# ====== 本地配置（每个人本地不同，不进代码仓库）======
+local_configs/my_local.yaml
+local_configs/*.local.yaml
+
+# ====== 本地输出文件（不进代码仓库）======
+local_output/
+data/downloads/*
+!data/downloads/.gitkeep
+data/screenshots/*
+!data/screenshots/.gitkeep
+data/output/*
+!data/output/.gitkeep
+
+# ====== 缓存文件 ======
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ====== 数据临时文件 ======
+*.tmp
+*.log

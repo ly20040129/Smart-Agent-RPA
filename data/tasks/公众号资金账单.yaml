@@ -1,0 +1,41 @@
+department: finance
+description: 登录微信支付，下载资金账单，处理数据计算销售额和退款额
+enabled: true
+mode: browser
+name: 公众号资金账单
+params_input:
+- key: date_from
+  label: 开始日期
+  required: true
+  type: date
+- key: date_to
+  label: 结束日期
+  required: true
+  type: date
+- help: 选择文件保存的目录
+  key: output_dir
+  label: 保存位置
+  required: true
+  type: path
+schedule: 0 9 * * 1
+steps:
+- action: run_workflow
+  description: 打开微信支付下载资金账单并导出Excel
+  params:
+    function: run
+    module: workflows.wechat_pay_bill
+  type: browser
+# - action: process_data
+#   description: 清洗账单数据，筛选汇总销售额退款额
+#   params:
+#     function: process
+#     module: data_processors.wechat_bill
+#   type: data
+- action: deliver_file
+  description: 保存到用户指定位置
+  params:
+    channels:
+    - local
+    task_name: 公众号资金账单
+  type: deliver
+updated_at: '2026-08-04T19:12:04.879622'

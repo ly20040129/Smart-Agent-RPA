@@ -1,0 +1,37 @@
+[
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-03T09:19:58.558937",
+    "status": "failed",
+    "error": "Page.goto: Protocol error (Page.navigate): Cannot navigate to invalid URL\nCall log:\n  - navigating to \"\", waiting until \"load\"\n",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-04T16:40:19.653833",
+    "status": "failed",
+    "error": "步骤1失败: 未知浏览器动作: run_workflow",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-04T16:59:47.439733",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: module 'workflows.jd_ibay_self' has no attribute 'run'",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-04T17:39:01.897491",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 82.2
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-04T17:59:38.966413",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 79.52
+  }
+]

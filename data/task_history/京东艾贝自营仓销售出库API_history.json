@@ -1,0 +1,72 @@
+[
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T12:01:36.214445",
+    "status": "failed",
+    "error": "name 'get_config' is not defined",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T12:05:58.918662",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.84
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T16:23:46.641158",
+    "status": "failed",
+    "error": "步骤1失败: API调用失败: 请提供 date_from 和 date_to 参数",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T16:34:09.588091",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 3.18
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T16:36:55.042838",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.45
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T16:38:17.285489",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.56
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T16:59:10.050676",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.08
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T17:03:30.826211",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.59
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T17:09:13.677365",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.13
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-04T17:30:19.525636",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.7
+  }
+]

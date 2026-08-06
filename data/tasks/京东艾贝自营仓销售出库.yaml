@@ -1,0 +1,40 @@
+department: finance
+description: 通过浏览器自动化获取京东艾贝自营仓实销实结明细数据，清洗后保存到指定位置
+enabled: true
+mode: browser
+name: 京东艾贝自营仓销售出库(浏览器)
+schedule: ''
+params_input:
+- key: date_from
+  label: 开始日期
+  type: date
+  required: true
+- key: date_to
+  label: 结束日期
+  type: date
+  required: true
+- key: output_dir
+  label: 保存位置
+  type: path
+  required: true
+  help: 选择文件保存的目录
+steps:
+- action: run_workflow
+  description: 调用浏览器自动化获取实销实结明细数据
+  params:
+    function: run
+    module: workflows.jd_ibay_self
+  type: browser
+# - action: process_data
+#   description: 清洗数据（列名中文化、格式化、筛选）
+#   params:
+#     function: process
+#     module: data_processors.jd_ibay_sales
+#   type: data
+- action: deliver_file
+  description: 保存到用户指定位置
+  params:
+    channels:
+    - local
+    task_name: 京东艾贝自营仓销售出库
+  type: deliver

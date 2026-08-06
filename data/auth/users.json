@@ -1,0 +1,30 @@
+{
+  "admin": {
+    "username": "admin",
+    "password": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+    "department": "admin",
+    "role": "admin",
+    "created_at": "2026-08-03T11:18:28.049216"
+  },
+  "admin2": {
+    "username": "admin2",
+    "password": "ac0e30f70142943d1861c7c3638cab74b4a583cf24815c5a9511408c0873bf11",
+    "department": "admin",
+    "role": "admin",
+    "created_at": "2026-08-03T11:41:12.354973"
+  },
+  "客服": {
+    "username": "客服",
+    "password": "ad13a41c3ea40b6fb9a9eed5be5be7cc420d24c3d0410f3d8ae32a766a52f3d2",
+    "department": "business",
+    "role": "user",
+    "created_at": "2026-08-03T11:43:24.906368"
+  },
+  "财务": {
+    "username": "财务",
+    "password": "c8d8b50b7a6b5080be442671c7028f7f8f159630d352bc348ab3b7ca17b0357a",
+    "department": "finance",
+    "role": "user",
+    "created_at": "2026-08-03T16:13:28.739504"
+  }
+}

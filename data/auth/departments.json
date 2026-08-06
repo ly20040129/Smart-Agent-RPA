@@ -1,0 +1,22 @@
+{
+  "admin": {
+    "name": "系统管理",
+    "description": "管理员部门",
+    "color": "#008080"
+  },
+  "finance": {
+    "name": "财务部",
+    "description": "财务相关任务",
+    "color": "#e74c3c"
+  },
+  "business": {
+    "name": "业务部",
+    "description": "业务相关任务",
+    "color": "#3498db"
+  },
+  "operations": {
+    "name": "运营部",
+    "description": "运营相关任务",
+    "color": "#f39c12"
+  }
+}
