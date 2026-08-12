@@ -25,12 +25,12 @@ steps:
     function: run
     module: workflows.jd_ibay_self
   type: browser
-# - action: process_data
-#   description: 清洗数据（列名中文化、格式化、筛选）
-#   params:
-#     function: process
-#     module: data_processors.jd_ibay_sales
-#   type: data
+- action: process_data
+  description: 清洗数据（列名中文化、格式化、筛选）
+  params:
+    function: process
+    module: data_processors.jd_ibay_sales
+  type: data
 - action: deliver_file
   description: 保存到用户指定位置
   params:

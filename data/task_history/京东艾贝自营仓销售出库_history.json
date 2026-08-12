@@ -33,5 +33,19 @@
     "status": "success",
     "error": null,
     "elapsed_time": 79.52
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-12T16:36:50.827351",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: name 'condition' is not defined（诊断: 失败的根本原因是工作流（Workflow）调用中使用了未定义的变量 'condition'。这表明在执行工作流时，可能存在代码逻辑错误或者外部依赖的数据未正确加载。）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-12T16:47:41.651086",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 81.24
   }
 ]

@@ -130,8 +130,6 @@ class Browser:
         print(f"[Browser] 点击: {description}")
         await self._sb.smart_click(description)
 
-        await self._sb.smart_wait(condition, timeout=timeout)
-
     async def fill(self, description, value):
         # 填输入框，比如 fill("手机号输入框", "13800138000")
         await self.start()

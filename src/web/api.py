@@ -537,7 +537,7 @@ async def refresh_cookie(key: str, user=Depends(get_current_user)):
         async with Browser(cookie_key=key, headless=False) as b:
             await b.wait_login("请扫码登录，完成后按回车刷新Cookie")
     
-    asyncio.create_task(do_refresh())
+    asyncio.create_task(do_refresh())  
     return {"message": f"正在打开浏览器，请扫码登录 {key}"}
 
 
