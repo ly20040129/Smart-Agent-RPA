@@ -12,7 +12,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from sdk import Browser, LocalConfig
-from models import JdSalesModel, DailyFinanceReport
+from entity_class import JdSalesModel, DailyFinanceReport
 
 # ====== 任务配置 ======
 TASK_NAME = "京东艾贝自营仓销售出库正式"
@@ -65,44 +65,73 @@ async def run(date_from=None, date_to=None, output_dir=None, progress_callback=N
         await asyncio.sleep(3)
         await b.wait("页面显示实销实结明细列表或者业务日期筛选框")
 
-        # 自动填写日期：用Playwright原生type逐字符输入（模拟真实键盘，React能识别）
+        # 自动填写日期：先通过JS直接改 value + 触发 React input 事件，
+        # 再用 keyboard 做一次逐字符兜底（ant-design 是受控组件，必须触发 onChange）
         log(3, f"填写日期范围: {date_from} ~ {date_to}")
         try:
             page = b._sb.browser.page
             # ant-design RangePicker 有2个input，第一个开始日期，第二个结束日期
-            # 用JS先清空并focus，再用page.type逐字符输入
-            js_focus_input = """(idx) => {
+            # 关键：ant-design 是 React 受控组件，直接改 DOM value 不生效，
+            # 必须先获取 React 的内部 state setter，或通过原生 value setter + dispatchEvent 触发 onChange
+            js_set_date = """(idx, dateStr) => {
+                // 1. 找到可见的 input
                 var inputs = document.querySelectorAll('.ant-picker-input input');
                 if (inputs.length === 0) {
                     inputs = document.querySelectorAll('.ant-picker input');
                 }
-                if (inputs.length > idx) {
-                    inputs[idx].focus();
-                    inputs[idx].select();
-                    return 'ok';
+                inputs = Array.from(inputs).filter(i => i.offsetParent !== null);
+                if (inputs.length <= idx) {
+                    return 'fail: found ' + inputs.length + ' visible inputs, idx=' + idx;
                 }
-                return 'fail: found ' + inputs.length + ' inputs';
+                var input = inputs[idx];
+
+                // 2. 聚焦
+                input.focus();
+
+                // 3. 用原生 descriptor 设 value（绕过 React 的拦截）
+                try {
+                    var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, dateStr);
+                } catch(e) {
+                    // 兜底：直接赋值
+                    input.value = dateStr;
+                }
+
+                // 4. 触发 React 需要的事件（input + change），让受控组件更新 state
+                var ev1 = new Event('input', { bubbles: true });
+                input.dispatchEvent(ev1);
+                var ev2 = new Event('change', { bubbles: true });
+                input.dispatchEvent(ev2);
+
+                // 5. 再 select 一次，确保后续键盘输入能整体替换
+                try { input.select(); } catch(e2){}
+
+                return 'ok: set idx=' + idx + ' to ' + dateStr;
             }"""
-            
+
             # 填开始日期
-            log(3, "填入开始日期")
-            r1 = await page.evaluate(js_focus_input, 0)
-            log(3, f"  focus结果: {r1}")
+            log(3, "填入开始日期: " + date_from)
+            r1 = await page.evaluate(js_set_date, 0, date_from)
+            log(3, f"  set结果: {r1}")
+            # 兜底：再逐字符输入一次（React 已更新 state 后不影响；如果 JS 方式没生效则补上）
+            await asyncio.sleep(0.3)
             await page.keyboard.type(date_from, delay=50)
             await asyncio.sleep(0.5)
-            # 按回车确认
             await page.keyboard.press('Enter')
             await asyncio.sleep(1)
-            
+
             # 填结束日期
-            log(3, "填入结束日期")
-            r2 = await page.evaluate(js_focus_input, 1)
-            log(3, f"  focus结果: {r2}")
+            log(3, "填入结束日期: " + date_to)
+            r2 = await page.evaluate(js_set_date, 1, date_to)
+            log(3, f"  set结果: {r2}")
+            await asyncio.sleep(0.3)
             await page.keyboard.type(date_to, delay=50)
             await asyncio.sleep(0.5)
             await page.keyboard.press('Enter')
             await asyncio.sleep(1)
-            
+
             log(3, "日期填写完成")
         except Exception as e:
             log(3, f"自动填日期失败({e})，请手动在页面上选择日期范围")

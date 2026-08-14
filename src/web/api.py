@@ -27,6 +27,7 @@ from loguru import logger
 from src.core.config import get_config
 from src.agent.task_manager import TaskManager
 from src.agent.task_executor import TaskExecutor
+from src.agent.task_queue import get_task_queue_manager, JobStatus
 from src.auth import auth_manager
 from src.storage import storage_manager
 
@@ -122,20 +123,28 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 task_manager = TaskManager()
+task_queue = get_task_queue_manager(max_concurrent=5)  # 最多同时跑 5 个任务
 
 # ==================== 模板管理 ====================
 from src.agent.template_manager import TemplateManager
 template_mgr = TemplateManager()
 
 
-# ==================== 页面路由 ====================
+# ==================== 挂载静态文件（CSS/JS/HTML 资源）====================
+from fastapi.staticfiles import StaticFiles
+_static_dir = Path(__file__).resolve().parent / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+# ==================== 页面路由（动态读取 html 文件，方便修改不用重启）====================
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return HTML_PAGE
+    return html_templates.get_index_page()
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page():
-    return LOGIN_PAGE
+    return html_templates.get_login_page()
 
 
 # ==================== 认证API ====================
@@ -285,19 +294,128 @@ class RunTaskRequest(BaseModel):
 
 @app.post("/api/tasks/{task_id}/run")
 async def run_task(task_id: str, req: RunTaskRequest = None, user: dict = Depends(require_auth)):
-    """手动执行任务（支持传入用户参数）"""
+    """手动执行任务（支持传入用户参数）- 提交到任务队列，支持并行执行"""
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "任务不存在")
     user_params = req.params if req else None
-    asyncio.create_task(_run_task_background(task_id, user_params, user))
-    return {"status": "started", "task_id": task_id}
+    task_name = task.get("name", task_id)
+
+    # 构造 run_fn：封装原先 _run_task_background 的逻辑，供队列执行
+    async def run_fn():
+        # 这里用局部变量捕获外面的 task_id, user_params, user
+        await manager.broadcast({
+            "type": "status",
+            "message": f"任务 [{task_name}] 开始执行...",
+            "task_id": task_id,
+        })
+        executor = TaskExecutor()
+        if user:
+            executor.set_user(user)
+        result = await executor.execute_task(task_id, user_params=user_params)
+        if result.get("status") == "success":
+            await manager.broadcast({
+                "type": "success",
+                "message": f"任务 [{task_name}] 执行成功，耗时 {result.get('elapsed_time')}秒",
+                "task_id": task_id,
+                "result": {k: v for k, v in result.items() if k != "context"},
+            })
+        else:
+            await manager.broadcast({
+                "type": "error",
+                "message": f"任务 [{task_name}] 执行失败: {result.get('error')}",
+                "task_id": task_id,
+                "error": result.get("error"),
+            })
+        return result
+
+    # 状态变化时通过 WebSocket 推送队列状态
+    def on_status_change(job):
+        payload = {
+            "type": "queue",
+            "job": job.to_dict(),
+            "queue_summary": task_queue.summary(),
+        }
+        asyncio.create_task(manager.broadcast(payload))
+
+    job_id = await task_queue.submit(
+        task_id=task_id,
+        task_name=task_name,
+        user_info=user,
+        user_params=user_params,
+        run_fn=run_fn,
+        on_status_change=on_status_change,
+    )
+
+    # 顺便立即推一下队列整体状态
+    await manager.broadcast({
+        "type": "queue_summary",
+        "summary": task_queue.summary(),
+        "jobs": task_queue.snapshot(task_id)[:20],
+    })
+
+    return {"status": "queued", "task_id": task_id, "job_id": job_id}
 
 @app.get("/api/tasks/{task_id}/history")
 async def get_history(task_id: str, user: dict = Depends(require_auth)):
     """获取任务执行历史"""
     history = task_manager.get_history(task_id)
     return {"history": history}
+
+
+# ==================== 任务队列 API ====================
+@app.get("/api/queue/summary")
+async def get_queue_summary(user: dict = Depends(require_auth)):
+    """获取队列概览（运行中/等待中/成功/失败计数）"""
+    return {"summary": task_queue.summary()}
+
+
+@app.get("/api/queue/jobs")
+async def get_queue_jobs(
+    task_id: Optional[str] = None,
+    limit: int = 100,
+    user: dict = Depends(require_auth),
+):
+    """获取队列任务列表。管理员看全部，普通用户只看自己部门可见的任务"""
+    all_jobs = task_queue.snapshot(task_id=task_id)
+    if user.get("role") != "admin":
+        user_dept = user.get("department", "")
+        # 根据 task_id 过滤权限
+        visible = []
+        for j in all_jobs:
+            t = task_manager.get_task(j["task_id"])
+            if not t:
+                continue
+            if not t.get("department") or t.get("department") == user_dept:
+                visible.append(j)
+        all_jobs = visible
+    return {"jobs": all_jobs[:limit]}
+
+
+@app.get("/api/queue/jobs/{job_id}")
+async def get_queue_job(job_id: str, user: dict = Depends(require_auth)):
+    """查询单个 job 的状态"""
+    job = task_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "任务不存在")
+    # 权限检查
+    if user.get("role") != "admin":
+        t = task_manager.get_task(job.task_id)
+        if t and t.get("department") and t["department"] != user.get("department"):
+            raise HTTPException(403, "无权访问")
+    return {"job": job.to_dict()}
+
+
+@app.post("/api/queue/jobs/{job_id}/cancel")
+async def cancel_queue_job(job_id: str, user: dict = Depends(require_auth)):
+    """取消排队中的任务（运行中的无法取消）"""
+    job = task_queue.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "任务不存在")
+    ok = await task_queue.cancel_job(job_id)
+    if not ok:
+        raise HTTPException(400, "只有等待中的任务才能取消（或已不存在）")
+    return {"status": "success", "job_id": job_id}
 
 
 # ==================== 动态建表API ====================
@@ -468,17 +586,9 @@ async def browse_files(
         "items": items
     }
 
-# ==================== 任务执行 ====================
-async def _run_task_background(task_id: str, user_params: dict = None, user_info: dict = None):
-    await manager.broadcast({"type": "status", "message": f"任务 {task_id} 开始执行..."})
-    executor = TaskExecutor()
-    if user_info:
-        executor.set_user(user_info)
-    result = await executor.execute_task(task_id, user_params=user_params)
-    if result.get("status") == "success":
-        await manager.broadcast({"type": "success", "message": f"任务执行成功，耗时 {result.get('elapsed_time')}秒"})
-    else:
-        await manager.broadcast({"type": "error", "message": f"任务执行失败: {result.get('error')}"})
+# ==================== 任务执行（旧函数已废弃，现走 task_queue 队列；保留占位引用防止意外调用）====================
+# 原先：async def _run_task_background(...)
+# 新逻辑直接在 run_task / smart_chat 里通过 task_queue.submit() 提交
 
 
 
@@ -491,7 +601,7 @@ def start_server():
 
 
 # ==================== HTML页面（从模板导入）====================
-from src.web.html_templates import LOGIN_PAGE, HTML_PAGE
+from src.web import html_templates
 
 if __name__ == "__main__":
     start_server()
@@ -644,12 +754,47 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
             if json_match2:
                 task_to_run = json_match2.group(1)
 
-        # 如果需要执行任务，在后台启动
+        # 如果需要执行任务，通过队列提交
         if task_to_run:
-            # 验证任务存在且用户有权限
             task = task_manager.get_task(task_to_run)
             if task and (user.get("role") == "admin" or task.get("department") == user_dept):
-                asyncio.create_task(_run_task_background(task_to_run, None, user))
+                task_name = task.get("name", task_to_run)
+
+                async def run_fn():
+                    await manager.broadcast({
+                        "type": "status",
+                        "message": f"任务 [{task_name}] 开始执行...（智能助手触发）",
+                        "task_id": task_to_run,
+                    })
+                    executor = TaskExecutor()
+                    executor.set_user(user)
+                    result = await executor.execute_task(task_to_run, user_params=None)
+                    if result.get("status") == "success":
+                        await manager.broadcast({
+                            "type": "success",
+                            "message": f"任务 [{task_name}] 执行成功，耗时 {result.get('elapsed_time')}秒",
+                            "task_id": task_to_run,
+                        })
+                    else:
+                        await manager.broadcast({
+                            "type": "error",
+                            "message": f"任务 [{task_name}] 执行失败: {result.get('error')}",
+                            "task_id": task_to_run,
+                        })
+                    return result
+
+                def on_status_change(job):
+                    payload = {"type": "queue", "job": job.to_dict(), "queue_summary": task_queue.summary()}
+                    asyncio.create_task(manager.broadcast(payload))
+
+                await task_queue.submit(
+                    task_id=task_to_run,
+                    task_name=task_name,
+                    user_info=user,
+                    user_params=None,
+                    run_fn=run_fn,
+                    on_status_change=on_status_change,
+                )
                 return {
                     "reply": reply,
                     "task_started": True,

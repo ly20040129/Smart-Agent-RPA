@@ -32,9 +32,10 @@ steps:
     module: data_processors.jd_ibay_sales
   type: data
 - action: deliver_file
-  description: 保存到用户指定位置
   params:
     channels:
-    - local
+      - dingtalk
+      - local
     task_name: 京东艾贝自营仓销售出库
   type: deliver
+

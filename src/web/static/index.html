@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>智能体平台</title>
+<link rel="stylesheet" href="/static/assets/app.css">
+<link rel="stylesheet" href="/static/assets/chat.css">
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <h1>康云集团智能体平台</h1>
+        <p>LLM驱动的智能自动化 · 不写代码，用自然语言编排任务</p>
+    </div>
+    <div class="header-right">
+        <div class="user-info">
+            <span>👤 <span id="current-user">-</span></span>
+            <span class="dept-badge" id="current-dept">-</span>
+        </div>
+        <button class="btn-logout" onclick="doLogout()">退出</button>
+    </div>
+</div>
+
+<div class="container">
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <h2>📋 任务列表</h2>
+            <select id="dept-filter" onchange="loadTasks()">
+                <option value="">全部部门</option>
+            </select>
+        </div>
+        <div class="tab-switch">
+            <button class="tab-btn active" onclick="switchTab('browser')">🌐 浏览器自动化</button>
+            <button class="tab-btn" onclick="switchTab('api')">🔌 API自动化</button>
+        </div>
+        <div style="display:flex;gap:10px;">
+            <button class="btn" style="background:#16a085;" onclick="openConfigModal()">⚙️ 我的配置</button>
+            <button class="btn btn-admin" onclick="openUserModal()">👥 用户管理</button>
+            <button class="btn btn-admin" onclick="openDepsModal()">🔧 系统依赖</button>
+            <button class="btn" onclick="openCreateModal()">+ 新增任务</button>
+        </div>
+    </div>
+    <div id="task-list"></div>
+</div>
+
+<!-- 新增/编辑 任务弹窗 -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal()"></div>
+<div class="modal" id="modal">
+    <h2 id="modal-title">新增任务</h2>
+    <div class="form-group">
+        <label>任务名称</label>
+        <input type="text" id="task-name" placeholder="如：公众号资金账单">
+    </div>
+    <div class="form-group">
+        <label>所属部门</label>
+        <select id="task-dept"></select>
+    </div>
+    <div class="form-group">
+        <label>任务模式</label>
+        <select id="task-mode">
+            <option value="browser">🌐 浏览器自动化</option>
+            <option value="api">🔌 API自动化</option>
+        </select>
+    </div>
+    <div class="form-group">
+        <label>任务描述</label>
+        <textarea id="task-desc" rows="2" placeholder="简要描述任务目标"></textarea>
+    </div>
+    <div class="form-group">
+        <label>定时执行（Cron格式，留空为手动）</label>
+        <input type="text" id="task-schedule" placeholder="如：0 9 * * 1（每周一9点）">
+    </div>
+    <div class="form-group">
+        <label>执行步骤</label>
+        <div id="steps-container"></div>
+        <button class="btn btn-sm" onclick="addStep()">+ 添加步骤</button>
+    </div>
+    <div class="delivery-section" id="task-delivery-section">
+        <h3>📦 交付配置（可选）</h3>
+        <div class="form-group">
+            <label>输出文件名模板</label>
+            <input type="text" id="task-filename-pattern" placeholder="如：{name}_{date}_{time}.xlsx">
+        </div>
+        <div class="form-group">
+            <label>完成后通知（DingTalk Webhook）</label>
+            <input type="text" id="task-dingtalk-webhook" placeholder="留空则使用全局配置">
+        </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn btn-success" onclick="saveTask()">保存</button>
+        <button class="btn btn-warning" onclick="closeModal()">取消</button>
+    </div>
+</div>
+
+<!-- 用户管理弹窗 -->
+<div class="modal-overlay" id="user-modal-overlay" onclick="closeUserModal()"></div>
+<div class="modal" id="user-modal" style="width:700px;">
+    <h2>👥 用户管理</h2>
+    <div id="user-list" style="max-height:300px;overflow-y:auto;margin-bottom:15px;"></div>
+    <div style="border-top:1px solid #eee;padding-top:15px;">
+        <h3 style="color:#008b8b;margin-bottom:10px;font-size:14px;">新增用户</h3>
+        <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <input type="text" id="new-username" placeholder="用户名" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <input type="password" id="new-password" placeholder="密码" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;">
+            <select id="new-dept" style="padding:8px;border:1px solid #ddd;border-radius:6px;"></select>
+            <select id="new-role" style="padding:8px;border:1px solid #ddd;border-radius:6px;">
+                <option value="user">普通用户</option>
+                <option value="admin">管理员</option>
+            </select>
+            <button class="btn btn-sm" onclick="createUser()">添加</button>
+        </div>
+    </div>
+    <button class="btn btn-warning" onclick="closeUserModal()">关闭</button>
+</div>
+
+<!-- 系统依赖弹窗 -->
+<div class="modal-overlay" id="deps-modal-overlay" onclick="closeDepsModal()"></div>
+<div class="modal" id="deps-modal" style="width:600px;">
+    <h2>🔧 系统依赖检测</h2>
+    <p style="color:#888;font-size:13px;margin-bottom:15px;">
+        桌面自动化（金蝶K/3、网点管家等）需要以下依赖。未安装时点击"安装"按钮即可自动安装。
+    </p>
+    <div id="deps-list" style="max-height:400px;overflow-y:auto;">
+        <div style="text-align:center;color:#888;padding:20px;">加载中...</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn btn-sm" onclick="checkDeps()">🔄 重新检测</button>
+        <button class="btn btn-warning" onclick="closeDepsModal()">关闭</button>
+    </div>
+</div>
+
+<!-- 我的配置弹窗 -->
+<div class="modal-overlay" id="config-modal-overlay" onclick="closeConfigModal()"></div>
+<div class="modal" id="config-modal" style="width:700px;">
+    <h2>⚙️ 我的配置</h2>
+    <p style="color:#888;font-size:12px;margin-bottom:15px;">配置你本地的文件路径和目录。上传的文件仅你自己可见，其他同事互不影响。</p>
+    <div id="config-form" style="max-height:350px;overflow-y:auto;"></div>
+    <div class="delivery-section">
+        <h3>📦 交付配置</h3>
+        <div class="form-group">
+            <label>下载根目录</label>
+            <div class="file-browse-group">
+                <input type="text" id="config-download-root" placeholder="如：D:\Downloads\SmartAgent">
+                <button class="btn btn-sm" onclick="browseDownloadRoot()">浏览</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>默认文件名模板</label>
+            <input type="text" id="config-filename-pattern" placeholder="如：{name}_{date}_{time}.xlsx" value="{name}_{date}_{time}.xlsx">
+            <p style="color:#999;font-size:11px;margin-top:4px;">支持变量：{name} {date} {time}</p>
+        </div>
+        <div class="form-group">
+            <label>DingTalk Webhook URL</label>
+            <input type="text" id="config-dingtalk-webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+        </div>
+        <h3 style="color:#008b8b;font-size:14px;margin:15px 0 10px;">📧 邮件SMTP配置</h3>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group">
+                <label>SMTP服务器</label>
+                <input type="text" id="config-email-smtp" placeholder="如：smtp.qq.com">
+            </div>
+            <div class="form-group">
+                <label>端口</label>
+                <input type="text" id="config-email-port" placeholder="465">
+            </div>
+            <div class="form-group">
+                <label>发件邮箱</label>
+                <input type="text" id="config-email-sender" placeholder="sender@example.com">
+            </div>
+            <div class="form-group">
+                <label>密码/授权码</label>
+                <input type="password" id="config-email-password" placeholder="授权码">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>收件人</label>
+            <input type="text" id="config-email-receivers" placeholder="多个邮箱用逗号分隔">
+        </div>
+        <div style="margin-top:10px;">
+            <button class="btn btn-sm" style="background:#8e44ad;" onclick="openTemplateModal()">📁 模板中心</button>
+        </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn btn-success" onclick="saveMyConfig()">💾 保存配置</button>
+        <button class="btn btn-warning" onclick="closeConfigModal()">关闭</button>
+    </div>
+</div>
+
+<!-- 模板中心弹窗 -->
+<div class="modal-overlay" id="template-modal-overlay" onclick="closeTemplateModal()"></div>
+<div class="modal" id="template-modal" style="width:700px;">
+    <h2>📁 模板中心</h2>
+    <div style="margin-bottom:15px;">
+        <h3 style="font-size:14px;color:#008b8b;margin-bottom:10px;">上传新模板</h3>
+        <div class="form-group">
+            <label>模板名称</label>
+            <input type="text" id="tpl-name" placeholder="如：销售日报模板">
+        </div>
+        <div class="form-group">
+            <label>模板描述</label>
+            <input type="text" id="tpl-desc" placeholder="简要描述模板用途">
+        </div>
+        <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <div class="form-group" style="flex:1;">
+                <label>选择文件</label>
+                <input type="file" id="tpl-file" accept=".xlsx,.xls,.docx,.pptx,.pdf,.json">
+            </div>
+            <div class="form-group" style="width:150px;">
+                <label>模板类型</label>
+                <select id="tpl-type">
+                    <option value="excel">Excel</option>
+                    <option value="word">Word</option>
+                    <option value="ppt">PPT</option>
+                    <option value="pdf">PDF</option>
+                    <option value="json">JSON</option>
+                    <option value="other">其他</option>
+                </select>
+            </div>
+        </div>
+        <button class="btn btn-sm btn-success" onclick="uploadTemplate()">📤 上传模板</button>
+    </div>
+    <div style="border-top:1px solid #eee;padding-top:15px;margin-top:15px;">
+        <h3 style="font-size:14px;color:#008b8b;margin-bottom:10px;">已有模板</h3>
+        <div id="template-list" class="template-list">
+            <p style="color:#999;text-align:center;padding:20px;">加载中...</p>
+        </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn btn-warning" onclick="closeTemplateModal()">关闭</button>
+    </div>
+</div>
+
+<!-- 日志面板 -->
+<div id="log-panel" class="collapsed">
+    <div class="log-header" onclick="toggleLogPanel()">
+        <span>📊 实时日志</span>
+        <button onclick="event.stopPropagation();document.getElementById('log-body').innerHTML='';">清空</button>
+    </div>
+    <div class="log-body" id="log-body"></div>
+</div>
+
+<!-- 任务参数输入弹窗 -->
+<div id="params-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title" id="params-modal-title">输入任务参数</span>
+            <span class="close" onclick="closeParamsModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="params-modal-body">
+        </div>
+        <div class="modal-footer">
+            <button class="btn-primary" onclick="runTaskWithParams()" id="params-run-btn">▶ 开始执行</button>
+            <button class="btn-secondary" onclick="closeParamsModal()">取消</button>
+        </div>
+    </div>
+</div>
+
+<!-- 智能助手浮窗 -->
+<div id="chat-fab" onclick="toggleChat()" title="智能助手">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+    </svg>
+</div>
+
+<div id="chat-panel">
+    <div class="chat-header">
+        <span>🤖 智能助手</span>
+        <span class="chat-close" onclick="toggleChat()">&times;</span>
+    </div>
+    <div id="chat-messages" class="chat-messages">
+        <div class="chat-msg bot">你好！我是智能助手，可以帮你查看任务、执行任务、回答问题。试试问我"列出我的任务"或"执行公众号资金账单"。</div>
+    </div>
+    <div id="chat-suggestions" class="chat-suggestions"></div>
+    <div class="chat-input-area">
+        <input type="text" id="chat-input" placeholder="输入消息..." onkeypress="if(event.key==='Enter')sendChat()"/>
+        <button onclick="sendChat()" id="chat-send-btn">发送</button>
+    </div>
+</div>
+
+<script src="/static/assets/app.js"></script>
+<script src="/static/assets/tasks.js"></script>
+<script src="/static/assets/config.js"></script>
+<script src="/static/assets/chat.js"></script>
+<script>init();</script>
+</body>
+</html>

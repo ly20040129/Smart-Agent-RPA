@@ -47,5 +47,19 @@
     "status": "success",
     "error": null,
     "elapsed_time": 81.24
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-14T14:18:55.562996",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 130.96
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库",
+    "timestamp": "2026-08-14T14:29:18.227115",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 82.65
   }
 ]

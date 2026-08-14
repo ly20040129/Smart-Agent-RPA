@@ -14,6 +14,7 @@ from loguru import logger
 from src.agent.smart_browser import SmartBrowser
 from src.agent.smart_data_processor import SmartDataProcessor
 from src.agent.task_manager import TaskManager
+from src.agent.dingtalk_notifier import build_notifier, DingTalkNotifier
 from src.storage import storage_manager
 from src.core.config import get_config
 from src.agent.delivery_service import DeliveryService
@@ -36,6 +37,7 @@ class TaskExecutor:
         self.template_manager = TemplateManager()
         self.recovery = None  # 智能异常自修复（按需初始化）
         self._current_user = None
+        self._dingtalk: Optional[DingTalkNotifier] = None  # 延迟构建，拿到 task_config & user_config 后再建
 
     async def execute_task(self, task_id: str, user_params: Dict = None) -> Dict[str, Any]:
         """
@@ -55,6 +57,11 @@ class TaskExecutor:
         if not task_config.get("enabled", True):
             return {"status": "failed", "error": "任务已禁用"}
 
+        # 构建钉钉通知器（按 task_config > user_config 优先级）
+        user_config = self._current_user.get("config", {}) if self._current_user else {}
+        self._dingtalk = build_notifier(user_config=user_config, task_config=task_config)
+        username = self._current_user.get("username", "") if self._current_user else ""
+
         logger.info(f"{'='*60}")
         logger.info(f"开始执行任务: {task_config.get('name', task_id)}")
         logger.info(f"{'='*60}")
@@ -65,8 +72,18 @@ class TaskExecutor:
             context["user_params"] = user_params
         # 设置用户信息用于交付步骤
         if self._current_user:
-            context["username"] = self._current_user.get("username", "")
-            context["user_config"] = self._current_user.get("config", {})
+            context["username"] = username
+            context["user_config"] = user_config
+
+        # 任务开始通知（钉钉）
+        try:
+            if self._dingtalk and self._dingtalk.enabled:
+                self._dingtalk.notify_task_started(
+                    task_name=task_config.get("name", task_id),
+                    username=username,
+                )
+        except Exception as _e:
+            logger.warning(f"钉钉[开始]通知发送失败，不影响执行: {_e}")
 
         try:
             steps = task_config.get("steps", [])
@@ -134,11 +151,18 @@ class TaskExecutor:
                 self.smart_desktop = None
 
             elapsed = time.time() - start_time
+            output_file = (
+                context.get("processed_file")
+                or context.get("downloaded_file")
+                or context.get("api_output_file")
+                or ""
+            )
             result = {
                 "status": "success",
                 "task_id": task_id,
                 "task_name": task_config.get("name"),
                 "elapsed_time": round(elapsed, 2),
+                "output_file": output_file,
                 "context": {k: v for k, v in context.items() if not callable(v)}
             }
 
@@ -157,6 +181,18 @@ class TaskExecutor:
                 )
                 # 释放锁
                 storage_manager.release_lock(f"task:{task_id}")
+
+            # 任务成功通知（钉钉）
+            try:
+                if self._dingtalk and self._dingtalk.enabled:
+                    self._dingtalk.notify_task_success(
+                        task_name=task_config.get("name", task_id),
+                        elapsed_sec=round(elapsed, 1),
+                        username=username,
+                        file_path=output_file,
+                    )
+            except Exception as _e:
+                logger.warning(f"钉钉[成功]通知发送失败，不影响执行: {_e}")
 
             logger.info(f"✅ 任务执行成功，耗时 {elapsed:.1f}秒")
             return result
@@ -185,6 +221,17 @@ class TaskExecutor:
                     error_message=str(e)
                 )
                 storage_manager.release_lock(f"task:{task_id}")
+
+            # 任务失败通知（钉钉）- 失败会 @all
+            try:
+                if self._dingtalk and self._dingtalk.enabled:
+                    self._dingtalk.notify_task_failed(
+                        task_name=task_config.get("name", task_id),
+                        error=str(e),
+                        username=username,
+                    )
+            except Exception as _e:
+                logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {_e}")
 
             return result
 
@@ -783,8 +830,57 @@ class TaskExecutor:
         params: Dict,
         context: Dict
     ) -> Dict[str, Any]:
-        """执行通知步骤"""
-        # TODO: 接入Web推送/企业微信/钉钉
-        message = params.get("message", "任务完成")
-        logger.info(f"📢 通知: {message}")
-        return {"status": "success"}
+        """
+        执行通知步骤
+
+        支持的 action：
+          - dingtalk_text:     钉钉纯文本消息
+              params: {message, at_mobiles:[], at_all:bool}
+          - dingtalk_markdown: 钉钉 Markdown 消息
+              params: {title, text, at_mobiles:[], at_all:bool}
+          - (默认) log:        仅写日志（兼容历史 notify 步骤）
+        """
+        message = params.get("message", "任务通知")
+        logger.info(f"📢 通知(action={action}): {message}")
+
+        try:
+            if action in ("dingtalk_text", "dingtalk", "text"):
+                if not (self._dingtalk and self._dingtalk.enabled):
+                    return {
+                        "status": "success",
+                        "warning": "钉钉未配置 webhook，仅输出日志占位",
+                        "skipped": True,
+                    }
+                res = self._dingtalk.send_text(
+                    content=message,
+                    at_mobiles=params.get("at_mobiles"),
+                    at_all=bool(params.get("at_all", False)),
+                )
+                if res.get("success") or res.get("skipped"):
+                    return {"status": "success", "context": {"dingtalk_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉发送失败")}
+
+            if action in ("dingtalk_markdown", "markdown"):
+                if not (self._dingtalk and self._dingtalk.enabled):
+                    return {
+                        "status": "success",
+                        "warning": "钉钉未配置 webhook，仅输出日志占位",
+                        "skipped": True,
+                    }
+                title = params.get("title") or "智能体平台通知"
+                text = params.get("text") or message
+                res = self._dingtalk.send_markdown(
+                    title=title,
+                    text=text,
+                    at_mobiles=params.get("at_mobiles"),
+                    at_all=bool(params.get("at_all", False)),
+                )
+                if res.get("success") or res.get("skipped"):
+                    return {"status": "success", "context": {"dingtalk_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉发送失败")}
+
+            # 默认：仅写日志
+            return {"status": "success"}
+        except Exception as e:
+            logger.warning(f"通知步骤执行异常(不影响主流程): {e}")
+            return {"status": "failed", "error": str(e)}

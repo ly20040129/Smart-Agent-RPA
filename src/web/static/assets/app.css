@@ -1,0 +1,139 @@
+/* 智能体平台 - 全局样式 */
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',sans-serif; background:#f0f2f5; color:#333; }
+
+.header {
+  background:linear-gradient(135deg,#008b8b,#006666); color:#fff;
+  padding:15px 40px; display:flex; justify-content:space-between; align-items:center;
+}
+.header-left h1 { font-size:20px; font-weight:600; }
+.header-left p { opacity:0.7; margin-top:3px; font-size:12px; }
+.header-right { display:flex; align-items:center; gap:15px; }
+.user-info { display:flex; align-items:center; gap:8px; font-size:13px; }
+.user-info .dept-badge { background:rgba(255,255,255,0.2); padding:3px 10px; border-radius:12px; font-size:11px; }
+.btn-logout { background:rgba(255,255,255,0.2); color:#fff; border:none; padding:6px 14px; border-radius:6px; cursor:pointer; font-size:12px; }
+.btn-logout:hover { background:rgba(255,255,255,0.3); }
+
+.container { max-width:1200px; margin:20px auto; padding:0 20px; }
+
+.toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+.toolbar h2 { color:#008b8b; font-size:18px; }
+.toolbar-left { display:flex; gap:10px; align-items:center; }
+.toolbar-left select { padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:13px; }
+
+.btn { background:#008b8b; color:#fff; border:none; padding:10px 20px; border-radius:6px; cursor:pointer; font-size:14px; transition:background 0.2s; }
+.btn:hover { background:#006666; }
+.btn-sm { padding:6px 12px; font-size:12px; }
+.btn-danger { background:#e74c3c; }
+.btn-danger:hover { background:#c0392b; }
+.btn-success { background:#27ae60; }
+.btn-success:hover { background:#219a52; }
+.btn-warning { background:#f39c12; }
+.btn-warning:hover { background:#d68910; }
+.btn-admin { background:#8e44ad; }
+.btn-admin:hover { background:#6c3483; }
+
+/* ---- Task Card ---- */
+.task-card { background:#fff; border-radius:10px; margin-bottom:15px; box-shadow:0 2px 8px rgba(0,0,0,0.06); overflow:hidden; transition:box-shadow 0.2s; }
+.task-card:hover { box-shadow:0 4px 16px rgba(0,0,0,0.1); }
+.task-header { display:flex; justify-content:space-between; align-items:center; padding:15px 20px; cursor:pointer; user-select:none; }
+.task-header:hover { background:#f8f9fa; }
+.task-header-left { display:flex; align-items:center; gap:12px; flex:1; }
+.task-name { font-size:16px; font-weight:600; color:#333; }
+.task-desc-row { display:flex; align-items:center; gap:10px; margin-top:3px; }
+.task-desc-row .desc { color:#888; font-size:12px; }
+.task-desc-row .schedule { color:#008b8b; font-size:12px; }
+.task-desc-row .dept-tag { background:#e0f7f7; color:#008b8b; padding:2px 8px; border-radius:4px; font-size:11px; }
+.task-header-right { display:flex; gap:6px; align-items:center; }
+.collapse-icon { transition:transform 0.3s; color:#888; font-size:14px; }
+.collapse-icon.open { transform:rotate(90deg); }
+.task-body { display:none; padding:0 20px 20px; border-top:1px solid #f0f0f0; }
+.task-body.show { display:block; }
+.task-steps { background:#f8f9fa; border-radius:8px; padding:12px 16px; margin:10px 0; }
+.task-step { padding:6px 0; font-size:13px; color:#555; border-bottom:1px dashed #e0e0e0; }
+.task-step:last-child { border-bottom:none; }
+.task-step .idx { color:#008b8b; font-weight:600; margin-right:6px; }
+.task-step .type { display:inline-block; padding:1px 6px; border-radius:3px; font-size:11px; margin-right:6px; }
+.task-step .type.browser { background:#e3f2fd; color:#1565c0; }
+.task-step .type.data { background:#fff3e0; color:#e65100; }
+.task-step .type.notify { background:#f3e5f5; color:#7b1fa2; }
+.task-step .action { color:#008b8b; font-weight:600; margin-right:6px; }
+.task-step .desc { color:#666; }
+
+.badge { padding:3px 10px; border-radius:12px; font-size:11px; font-weight:500; }
+.badge-on { background:#d4edda; color:#155724; }
+.badge-off { background:#f8d7da; color:#721c24; }
+
+/* ---- Tabs ---- */
+.tab-switch { display:flex; gap:0; }
+.tab-btn { padding:8px 20px; border:1px solid #008b8b; background:#fff; color:#008b8b; cursor:pointer; font-size:13px; }
+.tab-btn.active { background:#008b8b; color:#fff; }
+.tab-btn:first-child { border-radius:6px 0 0 6px; }
+.tab-btn:last-child { border-radius:0 6px 6px 0; }
+
+.mode-tag { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; margin-left:6px; }
+.mode-browser { background:#e3f2fd; color:#1565c0; }
+.mode-api { background:#fff3e0; color:#e65100; }
+
+/* ---- Modal ---- */
+.modal-overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999; }
+.modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:12px; padding:25px; width:650px; max-height:85vh; overflow-y:auto; z-index:1000; box-shadow:0 20px 60px rgba(0,0,0,0.3); }
+.modal h2 { margin-bottom:20px; color:#008b8b; font-size:18px; }
+
+.form-group { margin-bottom:15px; }
+.form-group label { display:block; margin-bottom:6px; font-weight:500; color:#555; font-size:13px; }
+.form-group input, .form-group textarea, .form-group select { width:100%; padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:14px; }
+.form-group input:focus, .form-group textarea:focus { outline:none; border-color:#008b8b; }
+
+.step-editor { background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:8px; }
+.step-editor select, .step-editor input { padding:6px 10px; border:1px solid #ddd; border-radius:4px; margin-right:5px; }
+
+/* ---- Delivery Section ---- */
+.delivery-section { border-top:1px solid #eee; padding-top:15px; margin-top:15px; }
+.delivery-section h3 { font-size:14px; color:#008b8b; margin-bottom:10px; }
+
+/* ---- Template Center ---- */
+.template-list { max-height:300px; overflow-y:auto; border:1px solid #eee; border-radius:6px; }
+.template-item { display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border-bottom:1px solid #f5f5f5; }
+.template-item:last-child { border-bottom:none; }
+.template-info { flex:1; }
+.template-name { font-weight:500; font-size:13px; }
+.template-meta { color:#999; font-size:11px; margin-top:2px; }
+
+.file-browse-group { display:flex; gap:8px; }
+.file-browse-group input { flex:1; }
+
+/* ---- Log Panel ---- */
+#log-panel {
+  position:fixed; bottom:0; right:20px; width:420px; max-height:220px;
+  background:#1e1e1e; color:#fff; border-radius:10px 10px 0 0;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.3); z-index:998; transition:all 0.3s;
+}
+#log-panel.collapsed { height:36px; overflow:hidden; }
+#log-panel .log-header { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; cursor:pointer; border-bottom:1px solid #333; }
+#log-panel.collapsed .log-header { border-bottom:none; }
+#log-panel .log-header span { color:#999; font-size:12px; }
+#log-panel .log-header button { background:none; border:none; color:#999; cursor:pointer; font-size:14px; padding:0 4px; }
+#log-panel .log-body { padding:8px 12px; overflow-y:auto; max-height:170px; font-family:Consolas,monospace; font-size:12px; }
+#log-panel.collapsed .log-body { display:none; }
+.log-line { margin:2px 0; padding:2px 0; }
+.log-success { color:#27ae60; }
+.log-error { color:#e74c3c; }
+.log-info { color:#3498db; }
+.log-warn { color:#f39c12; }
+
+/* ---- Params Modal (任务参数弹窗) ---- */
+#params-modal { z-index:10001; }
+#params-modal .modal-content { background:#fff; border-radius:12px; }
+#params-modal .modal-header { padding:15px 20px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
+#params-modal .modal-title { font-weight:600; font-size:16px; color:#333; }
+#params-modal .close { font-size:24px; cursor:pointer; color:#999; line-height:1; }
+#params-modal .close:hover { color:#333; }
+#params-modal .modal-body { padding:20px; max-height:60vh; overflow-y:auto; }
+#params-modal .modal-footer { padding:12px 20px; border-top:1px solid #eee; text-align:right; display:flex; gap:8px; justify-content:flex-end; }
+.btn-primary { background:#008b8b; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; }
+.btn-primary:hover { background:#006666; }
+.btn-secondary { background:#95a5a6; color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; }
+.btn-secondary:hover { background:#7f8c8d; }
+
+.form-input { padding:8px 12px; border:1px solid #ddd; border-radius:6px; font-size:14px; width:100%; }
