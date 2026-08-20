@@ -8,6 +8,7 @@
 #       await b.wait_login("请扫码登录")
 #       file = await b.download("点击下载业务明细账单")
 import sys
+import os
 import asyncio
 from pathlib import Path
 
