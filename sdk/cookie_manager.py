@@ -67,7 +67,8 @@ class CookieManager:
     PLATFORM_CONFIG: Dict[str, Dict] = {
         "wechat_pay": {
             "login_url": "https://pay.weixin.qq.com/index.php/core/home/login?return_url=https%3A%2F%2Fpay.weixin.qq.com%2Findex.php%2Fcore%2Fhome%2Fheader%3Fmenu%3D14103",
-            "core_cookies": ["session_key", "verifysession", "tgw_l7_route", "merchant_id", "g_ticket"],
+            # tgw_l7_route 是负载均衡cookie，访问即设置，不是登录态cookie，已移除
+            "core_cookies": ["session_key", "verifysession", "merchant_id", "g_ticket"],
         },
         "jd_shop": {
             "login_url": "https://passport.jd.com/new/login.aspx",
@@ -75,7 +76,8 @@ class CookieManager:
         },
         "jd_shop_ibay": {
             "login_url": "https://shop.jd.com/jdm/trade/tools/export/ExprotList?_JDMOMID_=1568",
-            "core_cookies": ["pin", "thor", "pinId", "_pst", "__jdu"],
+            # __jdu 是设备追踪cookie，访问即设置，不是登录态cookie，已移除
+            "core_cookies": ["pin", "thor", "pinId", "_pst"],
         },
         "jd_shangzhi": {
             "login_url": "https://shop.jd.com/jdm/trade/tools/export/ExprotList?_JDMOMID_=1568",
@@ -331,24 +333,30 @@ class CookieManager:
 
     def _is_logged_in(self, cookies: List[Dict], key: str) -> bool:
         """
-        检测是否已登录：看核心cookie是否都存在且有值
+        检测是否已登录：看核心cookie是否有足够的数量存在
 
-        逻辑：核心cookie列表中的cookie至少有一个存在且有值，就算已登录
-        （不是要求全部存在，因为有些cookie可能改名了）
+        逻辑：核心cookie列表中至少找到2个（或全部，如果总数少于2）才算已登录
+        避免单个cookie（如设备追踪cookie）误判为已登录
         """
         core_names = self.get_core_cookies(key)
         if not core_names:
             # 没配置核心cookie，无法判断，保守起见认为已登录
             return True
 
-        # 检查是否有至少一个核心cookie存在且有值
+        # 计算找到了多少个核心cookie
+        cookie_names = {c.get("name", "") for c in cookies}
+        found = [c for c in core_names if c in cookie_names]
+        # 检查找到的cookie是否有值（排除空值cookie）
+        found_with_value = []
         for c in cookies:
             name = c.get("name", "")
             value = c.get("value", "")
             if name in core_names and value:
-                return True
+                found_with_value.append(name)
 
-        return False
+        # 至少找到2个（或全部，如果核心cookie总数少于2）
+        threshold = min(2, len(core_names))
+        return len(found_with_value) >= threshold
 
     def is_logged_in(self, key: str) -> bool:
         """

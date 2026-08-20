@@ -57,9 +57,15 @@ function connectWS() {
                 } else if (d.status === 'browser_opened') {
                     addLog(d.message, 'info');
                 }
-                // 刷新Cookie列表（无论成功失败都刷新状态）
-                if (typeof loadCookieKeys === 'function') {
-                    loadCookieKeys();
+                // 更新按钮状态（包括轮询进度）
+                if (typeof onCookieRefreshMessage === 'function') {
+                    onCookieRefreshMessage(d);
+                }
+                // 刷新Cookie列表（成功/超时/错误时才刷新，轮询中不刷新）
+                if (d.status === 'success' || d.status === 'timeout' || d.status === 'error') {
+                    if (typeof loadCookieKeys === 'function') {
+                        loadCookieKeys();
+                    }
                 }
             } else if (d.type === 'queue' || d.type === 'queue_summary') {
                 // 队列状态变化，打一条简洁的日志

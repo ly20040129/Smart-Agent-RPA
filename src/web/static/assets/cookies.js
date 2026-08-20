@@ -68,6 +68,8 @@ async function loadCookieKeys() {
 }
 
 /* ---------- 刷新cookie（打开浏览器，后台自动检测登录） ---------- */
+var cookieRefreshTimers = {}; // 记录每个key的定时器
+
 async function refreshCookie(key, btn) {
     btn.disabled = true;
     btn.textContent = '⏳ 打开浏览器中...';
@@ -81,9 +83,9 @@ async function refreshCookie(key, btn) {
         if (res.ok) {
             addLog('浏览器已打开，请在浏览器中登录（' + key + '），登录成功后自动保存', 'info');
             btn.textContent = '⏳ 等待登录...';
-            // WebSocket会在登录成功/超时后推送消息，loadCookieKeys会自动刷新
+            // WebSocket推送cookie_refresh消息时更新按钮文字
             // 5分钟后恢复按钮（防止卡住）
-            setTimeout(function() {
+            cookieRefreshTimers[key] = setTimeout(function() {
                 btn.disabled = false;
                 btn.textContent = '🔄 刷新';
             }, 300000);
@@ -99,52 +101,26 @@ async function refreshCookie(key, btn) {
     }
 }
 
-/* ---------- 新增Cookie Key（多账号） ---------- */
-async function showAddCookieKeyForm() {
-    // 加载平台列表
-    var sel = document.getElementById('cookie-key-platform');
-    sel.innerHTML = '<option value="">选择平台...</option>';
-    try {
-        var res = await fetch(API + '/api/cookies/platforms', {headers: authHeaders()});
-        var data = await res.json();
-        var platforms = data.platforms || [];
-        for (var i = 0; i < platforms.length; i++) {
-            sel.innerHTML += '<option value="' + platforms[i].name + '">' + platforms[i].name + '</option>';
+/* WebSocket回调：更新刷新按钮状态 */
+function onCookieRefreshMessage(d) {
+    // 找到对应的刷新按钮
+    var buttons = document.querySelectorAll('#cookie-key-list button');
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        if (btn.onclick && btn.onclick.toString().indexOf(d.key) >= 0) {
+            if (d.status === 'success' || d.status === 'timeout' || d.status === 'error') {
+                btn.disabled = false;
+                btn.textContent = '🔄 刷新';
+                if (cookieRefreshTimers[d.key]) {
+                    clearTimeout(cookieRefreshTimers[d.key]);
+                    delete cookieRefreshTimers[d.key];
+                }
+            } else if (d.status === 'waiting') {
+                btn.textContent = '⏳ 检测中(' + d.message.match(/\d+/) + 's)...';
+            }
+            break;
         }
-    } catch(e) {
-        addLog('加载平台列表失败: ' + e.message, 'error');
     }
-    document.getElementById('cookie-key-form').style.display = 'block';
 }
 
-function hideAddCookieKeyForm() {
-    document.getElementById('cookie-key-form').style.display = 'none';
-    document.getElementById('cookie-key-name').value = '';
-    document.getElementById('cookie-key-platform').value = '';
-}
-
-async function registerCookieKey() {
-    var key = document.getElementById('cookie-key-name').value.trim();
-    var platform = document.getElementById('cookie-key-platform').value;
-    if (!key || !platform) {
-        addLog('请填写名称并选择平台', 'error');
-        return;
-    }
-    try {
-        var res = await fetch(API + '/api/cookies/register', {
-            method: 'POST',
-            headers: Object.assign({}, authHeaders(), {'Content-Type': 'application/json'}),
-            body: JSON.stringify({key: key, platform: platform})
-        });
-        var data = await res.json();
-        if (res.ok) {
-            addLog('已添加Cookie Key: ' + key + ' (平台: ' + platform + ')', 'success');
-            hideAddCookieKeyForm();
-            loadCookieKeys();
-        } else {
-            addLog('添加失败: ' + (data.detail || ''), 'error');
-        }
-    } catch(e) {
-        addLog('请求失败: ' + e.message, 'error');
-    }
-}
+/* ---------- 多账号注册由管理员在后台操作，前端不暴露 ---------- */

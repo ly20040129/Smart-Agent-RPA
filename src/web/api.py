@@ -700,27 +700,44 @@ async def refresh_cookie(key: str, user=Depends(require_auth)):
                     "message": f"浏览器已打开，请在浏览器中登录（{key}）",
                 })
 
-                # 自动轮询检测登录（不阻塞事件循环）
-                success = await b.wait_login_auto(
-                    timeout=300,
-                    on_success=None,
-                    on_timeout=None,
-                )
+                # 每次轮询时通过WebSocket推送进度
+                async def on_progress(info):
+                    found = info.get('found', [])
+                    threshold = info.get('threshold', 2)
+                    await manager.broadcast({
+                        "type": "cookie_refresh",
+                        "key": key,
+                        "status": info.get("status", "waiting"),
+                        "message": f"检测中（{info.get('elapsed', 0)}s）: 核心cookie {len(found)}/{threshold}，缺少: {info.get('missing', [])}",
+                    })
 
-                if success:
+                # 登录成功时推送
+                async def on_success():
                     await manager.broadcast({
                         "type": "cookie_refresh",
                         "key": key,
                         "status": "success",
                         "message": f"Cookie刷新成功（{key}）",
                     })
-                else:
+
+                # 超时时推送
+                async def on_timeout():
                     await manager.broadcast({
                         "type": "cookie_refresh",
                         "key": key,
                         "status": "timeout",
                         "message": f"登录超时，请重试（{key}）",
                     })
+
+                # 自动轮询检测登录（不阻塞事件循环，每3秒检查一次）
+                await b.wait_login_auto(
+                    timeout=300,
+                    interval=3,
+                    on_success=on_success,
+                    on_timeout=on_timeout,
+                    on_progress=on_progress,
+                )
+
         except Exception as e:
             logger.error(f"刷新Cookie失败: {e}")
             await manager.broadcast({

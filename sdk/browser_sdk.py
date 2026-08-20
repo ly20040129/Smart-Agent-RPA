@@ -177,7 +177,7 @@ class Browser:
                 cookie_manager.save(self.cookie_key, cookies)
                 print(f"[Browser] 登录完成，Cookie已保存: {len(cookies)}条")
 
-    async def wait_login_auto(self, timeout=300, interval=3000, on_success=None, on_timeout=None):
+    async def wait_login_auto(self, timeout=300, interval=3, on_success=None, on_timeout=None, on_progress=None):
         """
         自动轮询检测登录成功（不阻塞事件循环，不需要用户在终端操作）
 
@@ -186,9 +186,10 @@ class Browser:
 
         Args:
             timeout: 最大等待秒数（默认5分钟）
-            interval: 轮询间隔秒数（默认3天）
+            interval: 轮询间隔秒数（默认3秒）
             on_success: 登录成功时的回调（同步或异步函数）
             on_timeout: 超时时的回调
+            on_progress: 每次轮询时的回调，参数为 {total, found, missing, elapsed, status}
 
         Returns:
             True=登录成功，False=超时
@@ -205,37 +206,63 @@ class Browser:
             print(f"[Browser] {self.cookie_key}: 未配置核心cookie，回退到手动确认")
             return await self.wait_login("请登录后按回车继续")
 
-        print(f"[Browser] 开始自动检测登录（cookie_key={self.cookie_key}，超时{timeout}秒）")
+        print(f"[Browser] 开始自动检测登录（cookie_key={self.cookie_key}，核心cookie={core_cookies}，超时{timeout}秒，间隔{interval}秒）")
         start = _time.time()
+        poll_count = 0
 
         while _time.time() - start < timeout:
             await asyncio.sleep(interval)
+            poll_count += 1
+            elapsed = round(_time.time() - start, 1)
+
             try:
                 ctx = getattr(self._sb.browser, "context", None)
                 if not ctx:
+                    print(f"[Browser] 轮询#{poll_count} ({elapsed}s): context不存在，跳过")
                     continue
+
                 cookies = await ctx.cookies()
-                # 检查核心cookie是否出现
-                for c in cookies:
-                    name = c.get("name", "")
-                    value = c.get("value", "")
-                    if name in core_cookies and value:
-                        # 登录成功！保存cookie
-                        cookie_manager.save(self.cookie_key, cookies)
-                        elapsed = round(_time.time() - start, 1)
-                        print(f"[Browser] 自动检测到登录成功（耗时{elapsed}秒），Cookie已保存: {len(cookies)}条")
-                        if on_success:
-                            result = on_success()
-                            if asyncio.iscoroutine(result):
-                                await result
-                        return True
+                cookie_names = {c.get("name", "") for c in cookies}
+                # 找到哪些核心cookie（必须有值）
+                found = [c for c in core_cookies if c in cookie_names and any(x.get("name") == c and x.get("value") for x in cookies)]
+                missing = [c for c in core_cookies if c not in found]
+
+                # 至少找到2个核心cookie才算登录成功（避免单个cookie误判）
+                threshold = min(2, len(core_cookies))
+                if len(found) >= threshold:
+                    # 登录成功！保存cookie
+                    cookie_manager.save(self.cookie_key, cookies)
+                    print(f"[Browser] ✅ 登录成功（轮询#{poll_count}，耗时{elapsed}秒）")
+                    print(f"[Browser]   核心cookie已找到: {found}")
+                    print(f"[Browser]   共保存{len(cookies)}条cookie")
+                    if on_progress:
+                        result = on_progress({"total": len(cookies), "found": found, "missing": missing, "elapsed": elapsed, "status": "success"})
+                        if asyncio.iscoroutine(result):
+                            await result
+                    if on_success:
+                        result = on_success()
+                        if asyncio.iscoroutine(result):
+                            await result
+                    return True
+                else:
+                    # 还没登录，打印进度
+                    print(f"[Browser] 轮询#{poll_count} ({elapsed}s): 共{len(cookies)}条cookie，核心cookie找到{len(found)}/{len(core_cookies)}（需≥{threshold}），缺少: {missing}")
+                    if on_progress:
+                        result = on_progress({"total": len(cookies), "found": found, "missing": missing, "elapsed": elapsed, "status": "waiting", "threshold": threshold})
+                        if asyncio.iscoroutine(result):
+                            await result
+
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                print(f"[Browser] 轮询检测异常: {e}")
+                print(f"[Browser] 轮询#{poll_count} 异常: {e}")
+                if on_progress:
+                    result = on_progress({"total": 0, "found": [], "missing": core_cookies, "elapsed": elapsed, "status": "error", "error": str(e)})
+                    if asyncio.iscoroutine(result):
+                        await result
 
         # 超时
-        print(f"[Browser] ⏰ 登录超时（{timeout}秒）")
+        print(f"[Browser] ⏰ 登录超时（{timeout}秒，共轮询{poll_count}次）")
         if on_timeout:
             result = on_timeout()
             if asyncio.iscoroutine(result):

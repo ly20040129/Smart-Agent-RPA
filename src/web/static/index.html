@@ -244,24 +244,8 @@
         <div style="text-align:center;color:#888;padding:20px;">加载中...</div>
     </div>
 
-    <!-- 新增Cookie Key表单（多账号） -->
-    <div id="cookie-key-form" style="display:none;margin-top:15px;padding:15px;background:#f9f9f9;border-radius:6px;">
-        <div style="font-weight:500;margin-bottom:10px;">➕ 添加新账号</div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="cookie-key-name" placeholder="账号名称（如：jd_shangzhi_店铺B）" style="flex:1;min-width:200px;padding:8px;border:1px solid #ddd;border-radius:4px;">
-            <select id="cookie-key-platform" style="padding:8px;border:1px solid #ddd;border-radius:4px;">
-                <option value="">选择平台...</option>
-            </select>
-        </div>
-        <div style="display:flex;gap:10px;margin-top:10px;">
-            <button class="btn btn-sm btn-success" onclick="registerCookieKey()">✅ 确认添加</button>
-            <button class="btn btn-sm" onclick="hideAddCookieKeyForm()">取消</button>
-        </div>
-    </div>
-
     <div style="display:flex;gap:10px;margin-top:20px;">
         <button class="btn btn-sm" onclick="loadCookieKeys()">🔄 刷新状态</button>
-        <button class="btn btn-sm btn-success" onclick="showAddCookieKeyForm()">➕ 添加账号</button>
         <button class="btn btn-warning" onclick="closeCookieModal()">关闭</button>
     </div>
 </div>
