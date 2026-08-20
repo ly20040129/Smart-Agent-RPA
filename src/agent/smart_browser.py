@@ -63,7 +63,8 @@ class SmartBrowser:
         """
         检测是否有新tab打开，如果有则切换到最新的tab
 
-        解决问题：京东等网站点击"实销实结明细"等链接时会打开新tab，
+        解决问题实例：
+        京东等网站点击"实销实结明细"等链接时会打开新tab，
         但代码还在操作旧tab，导致找不到新页面里的查询按钮、表格等元素
         """
         try:
@@ -94,20 +95,20 @@ class SmartBrowser:
 
         策略：
           1. 先等 domcontentloaded（DOM解析完成）
-          2. 再短暂等 networkidle（网络请求平息），但不强制（有些页面持续轮询）
+          2. 再短暂等 networkidle（网络请求平息），但不强制（有些页面持续轮询：比如pdd视频自动上传页面）
           3. 全部用try/except包裹，超时就忽略（不能让等待阻塞整个流程）
         """
         page = self.browser.page
         if not page:
             return
 
-        # 等DOM加载完成（最基础，必须等）
+        # 等DOM加载完成（最基础，必须等！）
         try:
             await page.wait_for_load_state('domcontentloaded', timeout=timeout)
         except Exception:
             pass
 
-        # 等网络空闲（更彻底，但有些SPA页面永远不空闲，所以宽容处理）
+        # 等网络空闲（更彻底，但有些spa页面永远不空闲，所以宽容处理）
         try:
             await page.wait_for_load_state('networkidle', timeout=2000)
         except Exception:
@@ -123,7 +124,7 @@ class SmartBrowser:
 
         Returns:
             元素列表，每个元素包含:
-            - type: 元素类型 (button/link/input/a)
+            - type: 元素类型 (button/link/input/a)后续可以添加配置
             - text: 显示文本
             - selector: CSS选择器（用于后续点击）
             - attributes: 关键属性
@@ -209,9 +210,11 @@ class SmartBrowser:
 
         # 遍历主页+所有iframe，收集所有可交互元素
         # 京东等后台页面的查询按钮、表格、分页常在iframe里，只搜主页面会全部漏掉
+        #该死的iframe
+
         all_elements = []
 
-        # 等待iframe加载（京东页面点击后iframe需要时间加载）
+        # 等待iframe加载（如：京东页面点击后iframe需要时间加载）
         await asyncio.sleep(1.5)
 
         frames = self.browser.page.frames  # 包含main_frame
@@ -327,7 +330,7 @@ class SmartBrowser:
         timeout: int = 10000
     ) -> bool:
         """
-        智能点击 - 两段式选择
+        智能点击 - 两段式选择（一定程度上提高速率）
           第一段：本地关键词匹配（快速可靠，无LLM调用）
           第二段：命中不确定时才调用LLM
         点击时：遍历多种备选选择器，直到成功
@@ -412,7 +415,7 @@ class SmartBrowser:
         intent_clean = intent_clean.strip()
         intent_normalized = re.sub(r'\s+', '', intent_clean)  # 去掉所有空格用于匹配
 
-        # 危险词：命中了直接排除
+        # 危险词：命中了直接排除（一定要人工跑一次，提取危险因素，不然出问题了我可没办法）
         danger_words = ['退出', '注销', 'log out', 'logout', 'quit', '关闭', 'delete', '删除', '取消订单']
 
         scores = []
@@ -464,7 +467,7 @@ class SmartBrowser:
         return max_idx
 
     async def _click_with_smart_fallback(self, selector: str, timeout: int = 5000, ctx=None) -> bool:
-        """单选择器点击，带多策略（普通点击/force点击/JS点击）
+        """单选择器点击，多策略（普通点击/force点击/JS点击）
         ctx: 点击上下文，可以是page或frame（iframe里的元素要传frame）
         """
         if ctx is None:
@@ -488,7 +491,7 @@ class SmartBrowser:
         except Exception:
             pass
 
-        # 策略3：JavaScript dispatchEvent（最暴力，也最不受可见性影响）
+        # 策略3：JavaScript dispatchEvent（最暴力，有些不可见的直接就请求了）
         try:
             await ctx.evaluate(f"""(sel) => {{
                 const el = document.querySelector(sel);

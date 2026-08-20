@@ -14,7 +14,7 @@ from loguru import logger
 from src.agent.smart_browser import SmartBrowser
 from src.agent.smart_data_processor import SmartDataProcessor
 from src.agent.task_manager import TaskManager
-from src.agent.dingtalk_notifier import build_notifier, DingTalkNotifier
+from src.agent.dingtalk import DingTalkWebhook, build_webhook
 from src.storage import storage_manager
 from src.core.config import get_config
 from src.agent.delivery_service import DeliveryService
@@ -37,7 +37,7 @@ class TaskExecutor:
         self.template_manager = TemplateManager()
         self.recovery = None  # 智能异常自修复（按需初始化）
         self._current_user = None
-        self._dingtalk: Optional[DingTalkNotifier] = None  # 延迟构建，拿到 task_config & user_config 后再建
+        self._dingtalk: Optional[DingTalkWebhook] = None  # 延迟构建，拿到 task_config & user_config 后再建
 
     async def execute_task(self, task_id: str, user_params: Dict = None) -> Dict[str, Any]:
         """
@@ -59,7 +59,7 @@ class TaskExecutor:
 
         # 构建钉钉通知器（按 task_config > user_config 优先级）
         user_config = self._current_user.get("config", {}) if self._current_user else {}
-        self._dingtalk = build_notifier(user_config=user_config, task_config=task_config)
+        self._dingtalk = build_webhook(user_config=user_config, task_config=task_config)
         username = self._current_user.get("username", "") if self._current_user else ""
 
         logger.info(f"{'='*60}")

@@ -7,6 +7,8 @@
 #   df = ExcelClean.load_and_clean("D:/下载/账单.xlsx")  # 读取并自动清洗
 #   df = ExcelClean.filter(df, "金额 > 1000")             # 筛选
 #   ExcelClean.save(df, "D:/结果/处理后.xlsx")            # 保存
+# 后续可以持续封装新方法
+
 from pathlib import Path
 from typing import List
 import pandas as pd

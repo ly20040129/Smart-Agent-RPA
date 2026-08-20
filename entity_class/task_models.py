@@ -1,5 +1,5 @@
 # 任务相关的数据表（平台内部用，一般不用改）
-from models.base import BaseModel, Column
+from entity_class.base import BaseModel, Column
 
 
 class TaskHistory(BaseModel):

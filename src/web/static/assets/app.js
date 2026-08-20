@@ -46,7 +46,22 @@ function connectWS() {
     ws.onmessage = function(e) {
         try {
             var d = JSON.parse(e.data);
-            if (d.type === 'queue' || d.type === 'queue_summary') {
+            if (d.type === 'cookie_refresh') {
+                // Cookie刷新结果
+                if (d.status === 'success') {
+                    addLog(d.message, 'success');
+                } else if (d.status === 'timeout') {
+                    addLog(d.message, 'warn');
+                } else if (d.status === 'error') {
+                    addLog(d.message, 'error');
+                } else if (d.status === 'browser_opened') {
+                    addLog(d.message, 'info');
+                }
+                // 刷新Cookie列表（无论成功失败都刷新状态）
+                if (typeof loadCookieKeys === 'function') {
+                    loadCookieKeys();
+                }
+            } else if (d.type === 'queue' || d.type === 'queue_summary') {
                 // 队列状态变化，打一条简洁的日志
                 if (d.job) {
                     addLog('队列更新: ' + d.job.task_name + ' -> ' + d.job.status,

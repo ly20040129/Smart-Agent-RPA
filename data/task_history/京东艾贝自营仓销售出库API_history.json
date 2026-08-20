@@ -68,5 +68,19 @@
     "status": "success",
     "error": null,
     "elapsed_time": 2.7
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-18T18:27:16.760143",
+    "status": "failed",
+    "error": "步骤2失败: 数据清洗失败: No module named 'data_processors'（已重试1次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-20T17:09:43.992934",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: 京东API返回登录过期，cookie已自动清除。\n请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东。（诊断: 登录已过期或Cookie失效）",
+    "elapsed_time": null
   }
 ]

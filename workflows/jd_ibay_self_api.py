@@ -12,7 +12,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from sdk import Cookie
+from sdk.cookie_manager import cookie_manager
 
 TASK_NAME = "京东艾贝自营仓销售出库(API接口版)"
 COOKIE_KEY = "jd_shop_ibay"
@@ -49,7 +49,19 @@ async def _fetch_page(cookie_header, date_from, date_to, page):
 
     async with aiohttp.ClientSession() as session:
         async with session.post(API_URL, headers=headers, data=body, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            return json.loads(await resp.text()), resp.status
+            text = await resp.text()
+            result = json.loads(text)
+
+            # 检测cookie过期：京东API通常返回 {"success": false} 或重定向到登录页
+            if resp.status == 401 or resp.status == 302 or 'login' in text.lower()[:500]:
+                from sdk.cookie_manager import cookie_manager
+                cookie_manager.delete(COOKIE_KEY)
+                raise RuntimeError(
+                    f"京东API返回登录过期，cookie已自动清除。\n"
+                    f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东。"
+                )
+
+            return result, resp.status
 
 
 async def run_api(date_from=None, date_to=None, progress_callback=None, **kwargs):
@@ -65,10 +77,13 @@ async def run_api(date_from=None, date_to=None, progress_callback=None, **kwargs
     if not date_from or not date_to:
         raise RuntimeError("请提供 date_from 和 date_to 参数")
     
-    # 1. 获取cookies
-    cookies = Cookie.load(COOKIE_KEY)
-    if not cookies:
-        raise RuntimeError("Redis中没有找到cookies，请先用浏览器方式登录一次")
+    # 1. 获取cookies（从Redis读取，检查是否有效）
+    if not cookie_manager.ensure_valid(COOKIE_KEY):
+        raise RuntimeError(
+            f"Cookie不存在或已过期（平台: {COOKIE_KEY}）。\n"
+            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东。"
+        )
+    cookies = cookie_manager.load(COOKIE_KEY)
     
     cookie_header = _cookies_to_header(cookies)
     
@@ -141,7 +156,7 @@ async def main():
     print(f"程序开始：{TASK_NAME}")
     
     # 获取cookies
-    cookies = Cookie.load(COOKIE_KEY)
+    cookies = cookie_manager.load(COOKIE_KEY)
     if not cookies:
         print("❌ Redis中没有找到cookies，请先用浏览器方式登录一次")
         return

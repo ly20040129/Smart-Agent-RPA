@@ -4,7 +4,7 @@
 
 核心区别：
   传统RPA:  desktop.click_button("导出")              ← 按文本死找，控件名一改就废
-  智能体:   smart_desktop.smart_click("导出本月报表")  ← LLM看控件树，自己理解该点哪个
+  智能体:   smart_desktop.smart_click("导出本月报表")  ← LLM看控件树，自己理解该点哪个（也废）
 
 LLM的参与方式：
   1. 提取当前窗口的所有可交互控件（按钮、输入框、菜单项）

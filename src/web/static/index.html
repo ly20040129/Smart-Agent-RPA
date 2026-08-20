@@ -11,7 +11,7 @@
 
 <div class="header">
     <div class="header-left">
-        <h1>康云集团智能体平台</h1>
+        <h1>LY智能体平台</h1>
         <p>LLM驱动的智能自动化 · 不写代码，用自然语言编排任务</p>
     </div>
     <div class="header-right">
@@ -36,6 +36,7 @@
             <button class="tab-btn" onclick="switchTab('api')">🔌 API自动化</button>
         </div>
         <div style="display:flex;gap:10px;">
+            <button class="btn" style="background:#16a085;" onclick="openCookieModal()">🍪 Cookie管理</button>
             <button class="btn" style="background:#16a085;" onclick="openConfigModal()">⚙️ 我的配置</button>
             <button class="btn btn-admin" onclick="openUserModal()">👥 用户管理</button>
             <button class="btn btn-admin" onclick="openDepsModal()">🔧 系统依赖</button>
@@ -232,6 +233,39 @@
     </div>
 </div>
 
+<!-- Cookie管理弹窗 -->
+<div class="modal-overlay" id="cookie-modal-overlay" onclick="closeCookieModal()"></div>
+<div class="modal" id="cookie-modal" style="width:600px;">
+    <h2>🍪 Cookie管理</h2>
+    <p style="color:#888;font-size:12px;margin-bottom:15px;">各账号的登录状态。点击「刷新」会打开浏览器，登录后自动检测并保存Cookie。每个账号互不影响。</p>
+
+    <!-- Cookie Key列表 -->
+    <div id="cookie-key-list" style="max-height:350px;overflow-y:auto;border:1px solid #eee;border-radius:6px;">
+        <div style="text-align:center;color:#888;padding:20px;">加载中...</div>
+    </div>
+
+    <!-- 新增Cookie Key表单（多账号） -->
+    <div id="cookie-key-form" style="display:none;margin-top:15px;padding:15px;background:#f9f9f9;border-radius:6px;">
+        <div style="font-weight:500;margin-bottom:10px;">➕ 添加新账号</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <input type="text" id="cookie-key-name" placeholder="账号名称（如：jd_shangzhi_店铺B）" style="flex:1;min-width:200px;padding:8px;border:1px solid #ddd;border-radius:4px;">
+            <select id="cookie-key-platform" style="padding:8px;border:1px solid #ddd;border-radius:4px;">
+                <option value="">选择平台...</option>
+            </select>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+            <button class="btn btn-sm btn-success" onclick="registerCookieKey()">✅ 确认添加</button>
+            <button class="btn btn-sm" onclick="hideAddCookieKeyForm()">取消</button>
+        </div>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:20px;">
+        <button class="btn btn-sm" onclick="loadCookieKeys()">🔄 刷新状态</button>
+        <button class="btn btn-sm btn-success" onclick="showAddCookieKeyForm()">➕ 添加账号</button>
+        <button class="btn btn-warning" onclick="closeCookieModal()">关闭</button>
+    </div>
+</div>
+
 <!-- 日志面板 -->
 <div id="log-panel" class="collapsed">
     <div class="log-header" onclick="toggleLogPanel()">
@@ -282,6 +316,7 @@
 <script src="/static/assets/app.js"></script>
 <script src="/static/assets/tasks.js"></script>
 <script src="/static/assets/config.js"></script>
+<script src="/static/assets/cookies.js"></script>
 <script src="/static/assets/chat.js"></script>
 <script>init();</script>
 </body>

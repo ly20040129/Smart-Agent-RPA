@@ -2,17 +2,23 @@
 
 # ==================== LLM配置 ====================
 llm:
-  # 切换LLM提供商: "zhipuai"(智谱云) 或 "ollama"(本地)
-  provider: "zhipuai"
+  # 切换LLM提供商: "zhipuai"(智谱云) / "deepseek"(ModelScope) / "ollama"(本地)
+  provider: "deepseek"
 
   # ---- 智谱AI配置（GLM-4-Flash 免费模型）----
   zhipuai:
     api_key: "fd68c7a484e8477f8d001c8d0e9a7297.0RNMgaitnZ4vmXjq"     # API key
     model: "glm-4-flash"                   # 免费模型，速度快
-    # model: "glm-4"                       # 付费模型，能力更强
-    # model: "glm-4-air"                   # 轻量付费模型
-    temperature: 0.1                       # 温度参数(越低越稳定)
-    timeout: 60                            # 超时时间(秒)
+    temperature: 0.1
+    timeout: 60
+
+  # ---- DeepSeek配置（ModelScope，OpenAI兼容接口）----
+  deepseek:
+    api_key: "ms-826a12e8-7c25-4878-bdda-5b8d7fcae594"
+    base_url: "https://api-inference.modelscope.cn/v1"
+    model: "deepseek-ai/DeepSeek-V4-Flash-0731"
+    temperature: 0.1
+    timeout: 60
 
   # ---- Ollama本地配置（备用，需要本地部署）----
   ollama:

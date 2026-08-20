@@ -76,7 +76,7 @@ body { font-family:'Segoe UI',sans-serif; background:linear-gradient(135deg,#008
 </head>
 <body>
 <div class="login-box">
-    <h1>康云集团智能体平台</h1>
+    <h1>LY智能体平台</h1>
     <p class="subtitle">LLM驱动的智能自动化</p>
     <div class="form-group">
         <label>用户名</label>

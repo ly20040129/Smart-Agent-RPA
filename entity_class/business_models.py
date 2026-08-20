@@ -1,5 +1,5 @@
 # 业务部门的数据表（销售、库存、运营等）
-from models.base import BaseModel, Column
+from entity_class.base import BaseModel, Column
 
 
 class SalesDailyModel(BaseModel):

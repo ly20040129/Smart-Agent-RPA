@@ -608,47 +608,130 @@ if __name__ == "__main__":
 
 
 # ===== Cookie管理 =====
-@app.get("/api/cookies")
-async def list_cookies(user=Depends(get_current_user)):
-    """列出所有Cookie状态"""
-    from sdk import Cookie
-    return {"cookies": Cookie.list_all()}
+@app.get("/api/cookies/keys")
+async def list_cookie_keys(user=Depends(require_auth)):
+    """
+    列出所有cookie_key及其状态
+    来源：平台配置 + 自定义注册 + Redis中已有的
+    只返回：key名、所属平台、状态、剩余天数
+    不返回cookie内容
+    """
+    from sdk.cookie_manager import cookie_manager
+    keys = cookie_manager.list_cookie_keys()
+    return {"keys": keys}
 
 
-@app.delete("/api/cookies/{key}")
-async def delete_cookie(key: str, user=Depends(get_current_user)):
-    """删除指定Cookie（下次需要重新登录）"""
-    from sdk import Cookie
-    ok = Cookie.delete(key)
-    return {"success": ok}
+@app.get("/api/cookies/platforms")
+async def list_cookie_platforms(user=Depends(require_auth)):
+    """列出所有可用平台（用于注册新cookie_key时选择）"""
+    from sdk.cookie_manager import cookie_manager
+    platforms = []
+    for name, cfg in cookie_manager.PLATFORM_CONFIG.items():
+        platforms.append({
+            "name": name,
+            "login_url": cfg.get("login_url", ""),
+        })
+    return {"platforms": platforms}
 
 
-@app.get("/api/cookies/{key}/status")
-async def cookie_status(key: str, user=Depends(get_current_user)):
-    """查看指定Cookie的状态"""
-    from sdk import Cookie
-    ttl = Cookie.ttl(key)
-    if ttl > 0:
-        return {"key": key, "status": "正常", "days_left": round(ttl / 86400, 1)}
-    elif ttl == -1:
-        return {"key": key, "status": "不存在", "days_left": 0}
-    else:
-        return {"key": key, "status": "已过期", "days_left": 0}
+@app.post("/api/cookies/register")
+async def register_cookie_key(req: dict, user=Depends(require_auth)):
+    """
+    注册一个新的cookie_key（多账号场景）
+    body: {"key": "jd_shangzhi_店铺B", "platform": "jd_shangzhi"}
+    """
+    from sdk.cookie_manager import cookie_manager
+    key = req.get("key", "").strip()
+    platform = req.get("platform", "").strip()
+    if not key or not platform:
+        raise HTTPException(400, "key和platform不能为空")
+    ok = cookie_manager.register_cookie_key(key, platform)
+    if not ok:
+        raise HTTPException(400, f"注册失败，平台 {platform} 不存在")
+    return {"status": "success", "key": key, "platform": platform}
+
+
+@app.delete("/api/cookies/keys/{key}")
+async def delete_cookie_key(key: str, user=Depends(require_auth)):
+    """删除一个cookie_key及其cookie（自定义注册的才允许删除，平台内置的不允许）"""
+    from sdk.cookie_manager import cookie_manager
+    # 尝试取消注册（只对自定义key有效）
+    cookie_manager.unregister_cookie_key(key)
+    # 删除cookie
+    cookie_manager.delete(key)
+    return {"status": "success"}
 
 
 @app.post("/api/cookies/{key}/refresh")
-async def refresh_cookie(key: str, user=Depends(get_current_user)):
-    """手动刷新Cookie（需要打开浏览器重新登录）"""
-    from sdk import Browser
-    import asyncio
-    
-    # 在后台启动浏览器让用户扫码
+async def refresh_cookie(key: str, user=Depends(require_auth)):
+    """
+    刷新指定cookie_key的Cookie
+    只影响这一个key，不会动其他key的cookie
+
+    流程：删除旧cookie → 打开浏览器到登录页 → 后台轮询检测登录 → 自动保存
+    用户只需在浏览器中登录，无需操作后台终端
+    登录结果通过WebSocket推送到前端
+    """
+    from sdk.browser_sdk import Browser
+    from sdk.cookie_manager import cookie_manager
+
+    # 检查cookie_key是否已配置平台
+    platform = cookie_manager.resolve_platform(key)
+    if not platform:
+        raise HTTPException(400, f"未知的cookie_key: {key}，请先注册并关联平台")
+
+    login_url = cookie_manager.get_login_url(key)
+    if not login_url:
+        raise HTTPException(400, f"平台 {platform} 未配置login_url")
+
+    # 只删除这一个key的旧cookie（不影响其他key）
+    cookie_manager.delete(key)
+
     async def do_refresh():
-        async with Browser(cookie_key=key, headless=False) as b:
-            await b.wait_login("请扫码登录，完成后按回车刷新Cookie")
-    
-    asyncio.create_task(do_refresh())  
-    return {"message": f"正在打开浏览器，请扫码登录 {key}"}
+        try:
+            async with Browser(cookie_key=key, headless=False) as b:
+                await b.open(login_url)
+
+                # WebSocket通知：浏览器已打开
+                await manager.broadcast({
+                    "type": "cookie_refresh",
+                    "key": key,
+                    "status": "browser_opened",
+                    "message": f"浏览器已打开，请在浏览器中登录（{key}）",
+                })
+
+                # 自动轮询检测登录（不阻塞事件循环）
+                success = await b.wait_login_auto(
+                    timeout=300,
+                    on_success=None,
+                    on_timeout=None,
+                )
+
+                if success:
+                    await manager.broadcast({
+                        "type": "cookie_refresh",
+                        "key": key,
+                        "status": "success",
+                        "message": f"Cookie刷新成功（{key}）",
+                    })
+                else:
+                    await manager.broadcast({
+                        "type": "cookie_refresh",
+                        "key": key,
+                        "status": "timeout",
+                        "message": f"登录超时，请重试（{key}）",
+                    })
+        except Exception as e:
+            logger.error(f"刷新Cookie失败: {e}")
+            await manager.broadcast({
+                "type": "cookie_refresh",
+                "key": key,
+                "status": "error",
+                "message": f"刷新失败: {e}",
+            })
+
+    asyncio.create_task(do_refresh())
+    return {"message": f"正在打开浏览器，请在浏览器中登录（{key}）"}
 
 
 # ==================== 智能问答API ====================
@@ -657,20 +740,57 @@ from pydantic import BaseModel as _BM
 class ChatRequest(_BM):
     message: str
 
+
+def _match_task_id(text: str, visible_tasks: list) -> Optional[str]:
+    """
+    模糊匹配任务：从用户输入或LLM回复中找到最匹配的任务
+    
+    匹配顺序：精确filename → 精确name → 模糊匹配name
+    """
+    text = text.strip()
+    
+    # 1. 精确匹配 filename
+    for t in visible_tasks:
+        if t.get("filename") == text:
+            return text
+    
+    # 2. 精确匹配 name
+    for t in visible_tasks:
+        if t.get("name") == text:
+            return t.get("filename", "")
+    
+    # 3. 模糊匹配（包含关系）
+    for t in visible_tasks:
+        name = t.get("name", "")
+        if text in name or name in text:
+            return t.get("filename", "")
+    
+    # 4. 相似度匹配
+    from difflib import SequenceMatcher
+    best_match = None
+    best_score = 0.5  # 最低阈值
+    for t in visible_tasks:
+        name = t.get("name", "")
+        score = SequenceMatcher(None, text, name).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = t.get("filename", "")
+    
+    return best_match
+
+
 @app.post("/api/chat")
 async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
-    """
-    智能问答入口 - 用户和GLM对话，可以查任务、跑任务、问问题
-    """
+    """智能问答入口 - 用户和LLM对话，可以查任务、跑任务、问问题"""
     from src.core.llm_client import LocalLLMClient
     import json as _json
+    import re as _re
 
     llm = LocalLLMClient()
 
     # 获取当前用户可见的任务列表
     user_dept = user.get("department", "")
     all_tasks = task_manager.list_tasks()
-    # 按部门过滤
     visible_tasks = []
     for t in all_tasks:
         if user.get("role") == "admin" or t.get("department") == user_dept:
@@ -682,12 +802,13 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
                 "filename": t.get("filename", "")
             })
 
+    # 任务列表文本（同时显示名称和文件名，让LLM能精确返回）
     task_list_text = "\n".join(
-        f"- {t['name']} ({t['mode']}): {t['description']}"
-        for t in visible_tasks
+        f"- 名称:{t['name']} | 文件名:{t['filename']} | 模式:{t['mode']} | {t['description']}"
+        for t in visible_tasks if t["enabled"]
     ) if visible_tasks else "（暂无任务）"
 
-    # 获取最近5条执行历史
+    # 获取最近执行历史
     recent_history = []
     try:
         for t in visible_tasks:
@@ -696,12 +817,8 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
                 hist = task_manager.get_history(fname)
                 if hist:
                     for h in hist[:2]:
-                        recent_history.append({
-                            "task": t["name"],
-                            "status": h.get("status", ""),
-                            "time": h.get("executed_at", ""),
-                            "error": h.get("error", "")
-                        })
+                        recent_history.append({"task": t["name"], "status": h.get("status", ""),
+                                               "time": h.get("executed_at", ""), "error": h.get("error", "")})
     except Exception:
         pass
 
@@ -710,36 +827,32 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
         for h in recent_history[:5]
     ) if recent_history else "（暂无历史）"
 
-    system_prompt = f"""你是康云集团智能自动化平台的助手。当前用户是 {user.get('username', '用户')}，部门：{user_dept}。
+    system_prompt = f"""你是LY智能自动化平台的助手。当前用户是 {user.get('username', '用户')}，部门：{user_dept}。
 
-你可以帮用户做以下事情：
-
-1. 查看任务：当前可见的任务列表如下：
+## 可执行的任务列表
 {task_list_text}
 
-2. 执行任务：如果用户说"跑一下XX"或"执行XX"，你找到对应任务名，返回JSON指令。
-3. 查看历史：最近的执行历史：
+## 最近执行历史
 {history_text}
 
-4. 回答平台使用问题：如何创建任务、如何配置参数等。
-
-5. 数据分析建议：根据任务描述给出数据处理建议。
-
-当用户要求执行任务时，返回如下JSON格式（在回复开头）：
+## 你的职责
+1. 用户想执行任务时，找到对应任务，返回JSON指令。返回格式：
 ```json
-{{"action": "run_task", "task_id": "任务文件名(不含.yaml)"}}
+{{"action": "run_task", "task_id": "任务的文件名"}}
 ```
-然后再用自然语言解释你在做什么。
+注意：task_id 必须是上面列表中的"文件名"字段值，不要用任务名称。
 
-如果用户只是问问题或聊天，正常回复即可，不需要返回JSON。
+2. 用户问任务列表、历史情况时，直接回答。
+
+3. 用户问平台使用问题时，简要回答。
+
 保持回复简洁，用中文。"""
 
     try:
         reply = llm.chat(req.message, system_prompt=system_prompt, use_history=True)
 
-        # 检查是否包含执行任务的JSON指令
+        # 提取JSON指令
         task_to_run = None
-        import re as _re
         json_match = _re.search(r'```json\s*(\{.*?\})\s*```', reply, _re.DOTALL)
         if json_match:
             try:
@@ -748,63 +861,40 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
                     task_to_run = cmd["task_id"]
             except Exception:
                 pass
-        else:
-            # 也检查不带代码块的JSON
-            json_match2 = _re.search(r'\{"action":\s*"run_task",\s*"task_id":\s*"([^"]+)"\}', reply)
+        if not task_to_run:
+            json_match2 = _re.search(r'"task_id"\s*:\s*"([^"]+)"', reply)
             if json_match2:
                 task_to_run = json_match2.group(1)
 
-        # 如果需要执行任务，通过队列提交
+        # 模糊匹配：LLM返回的可能不是精确的filename
+        if task_to_run:
+            task_to_run = _match_task_id(task_to_run, visible_tasks)
+
+        # 执行任务
         if task_to_run:
             task = task_manager.get_task(task_to_run)
             if task and (user.get("role") == "admin" or task.get("department") == user_dept):
                 task_name = task.get("name", task_to_run)
 
                 async def run_fn():
-                    await manager.broadcast({
-                        "type": "status",
-                        "message": f"任务 [{task_name}] 开始执行...（智能助手触发）",
-                        "task_id": task_to_run,
-                    })
+                    await manager.broadcast({"type": "status", "message": f"任务 [{task_name}] 开始执行...", "task_id": task_to_run})
                     executor = TaskExecutor()
                     executor.set_user(user)
                     result = await executor.execute_task(task_to_run, user_params=None)
                     if result.get("status") == "success":
-                        await manager.broadcast({
-                            "type": "success",
-                            "message": f"任务 [{task_name}] 执行成功，耗时 {result.get('elapsed_time')}秒",
-                            "task_id": task_to_run,
-                        })
+                        await manager.broadcast({"type": "success", "message": f"任务 [{task_name}] 成功，耗时 {result.get('elapsed_time')}秒", "task_id": task_to_run})
                     else:
-                        await manager.broadcast({
-                            "type": "error",
-                            "message": f"任务 [{task_name}] 执行失败: {result.get('error')}",
-                            "task_id": task_to_run,
-                        })
+                        await manager.broadcast({"type": "error", "message": f"任务 [{task_name}] 失败: {result.get('error')}", "task_id": task_to_run})
                     return result
 
                 def on_status_change(job):
-                    payload = {"type": "queue", "job": job.to_dict(), "queue_summary": task_queue.summary()}
-                    asyncio.create_task(manager.broadcast(payload))
+                    asyncio.create_task(manager.broadcast({"type": "queue", "job": job.to_dict(), "queue_summary": task_queue.summary()}))
 
-                await task_queue.submit(
-                    task_id=task_to_run,
-                    task_name=task_name,
-                    user_info=user,
-                    user_params=None,
-                    run_fn=run_fn,
-                    on_status_change=on_status_change,
-                )
-                return {
-                    "reply": reply,
-                    "task_started": True,
-                    "task_id": task_to_run
-                }
+                await task_queue.submit(task_id=task_to_run, task_name=task_name, user_info=user,
+                                        user_params=None, run_fn=run_fn, on_status_change=on_status_change)
+                return {"reply": reply, "task_started": True, "task_id": task_to_run}
             else:
-                return {
-                    "reply": reply + "\n\n⚠️ 任务不存在或你没有权限执行此任务。",
-                    "task_started": False
-                }
+                return {"reply": reply + "\n\n⚠️ 任务不存在或你没有权限执行此任务。", "task_started": False}
 
         return {"reply": reply, "task_started": False}
 
@@ -946,3 +1036,40 @@ async def install_dep(req: dict, user: dict = Depends(require_admin)):
         return {"status": "failed", "error": "安装超时（5分钟）"}
     except Exception as e:
         return {"status": "failed", "error": str(e)}
+
+
+# ==================== LLM模型管理API ====================
+@app.get("/api/llm/providers")
+async def list_llm_providers(user: dict = Depends(require_auth)):
+    """列出所有可用的LLM提供商和当前选中的"""
+    from src.core.config import get_config as _get_cfg
+    cfg = _get_cfg()
+    providers = [
+        {"id": "zhipuai", "name": "智谱AI (GLM-4-Flash)", "configured": bool(cfg.llm.zhipuai_api_key)},
+        {"id": "deepseek", "name": "DeepSeek-V4 (ModelScope)", "configured": bool(cfg.llm.deepseek_api_key)},
+        {"id": "ollama", "name": "Ollama (本地)", "configured": bool(cfg.llm.base_url)},
+    ]
+    return {
+        "providers": providers,
+        "current": cfg.llm.provider,
+        "current_model": cfg._get_model_name(),
+    }
+
+
+@app.post("/api/llm/switch")
+async def switch_llm_provider(req: dict, user: dict = Depends(require_admin)):
+    """切换LLM提供商（仅管理员）"""
+    provider = req.get("provider", "")
+    if provider not in ("zhipuai", "deepseek", "ollama"):
+        raise HTTPException(400, f"不支持的提供商: {provider}")
+
+    # 更新配置并保存
+    config.update_config("llm.provider", provider)
+    config.save_config()
+
+    # 重置全局配置单例，下次使用时重新加载
+    import src.core.config as cfg_module
+    cfg_module._config_instance = None
+
+    logger.info(f"管理员 {user.get('username')} 切换LLM提供商为: {provider}")
+    return {"status": "success", "provider": provider}

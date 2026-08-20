@@ -1,7 +1,7 @@
 # 用户和部门的表定义
 # 目前用户数据存在JSON里，这里预留了MySQL表定义
 # 后续用户多了可以迁移到MySQL
-from models.base import BaseModel, Column
+from entity_class.base import BaseModel, Column
 
 
 class UserTable(BaseModel):

@@ -1,30 +1,29 @@
-department: operations
-description: 通过API接口获取京东商智竞品统计数据
-enabled: true
-mode: api
 name: 京东商智竞品数据统计(API)
+description: 通过API接口获取京东商智竞品统计数据，匹配Excel模板后保存
+mode: api
+department: operations
+enabled: true
 schedule: ''
+
 params_input:
-- key: date_str
-  label: 查询日期
-  type: date
-  required: true
-- key: output_dir
-  label: 保存位置
-  type: path
-  required: true
-- key: excel_path
-  label: 上传模板
-  type: file
-  required: true
-- key: cookie
-  label: cookie文件
-  type: file
-  required: true
-  help: 从浏览器导出的cookie JSON文件
+  - key: date_str
+    label: 查询日期
+    type: date
+    required: true
+  - key: output_dir
+    label: 保存位置
+    type: path
+    required: true
+  - key: excel_path
+    label: 上传模板
+    type: file
+    required: true
+    help: 每日9730销量统计表模板
+
 steps:
-- action: run_workflow
-  description: 调用京东API获取商智竞品数据统计
-  params:
-    function: process
-    
+  - type: api
+    action: run_workflow
+    description: 调用京东API获取商智竞品数据并写入Excel
+    params:
+      module: workflows.jd_shangzhi_jingp_data
+      function: process

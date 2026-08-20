@@ -1,3 +1,6 @@
+/* CSS reset（登录页不加载app.css，需要在这里补上） */
+* { margin:0; padding:0; box-sizing:border-box; }
+
 /* 智能体平台 - 聊天浮窗样式 */
 #chat-fab {
     position: fixed; bottom: 30px; right: 30px; width: 56px; height: 56px;

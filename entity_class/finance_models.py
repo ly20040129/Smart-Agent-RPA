@@ -1,6 +1,6 @@
 # 财务部门的数据表
 # 新增表：复制一个class，改table_name和列就行
-from models.base import BaseModel, Column
+from entity_class.base import BaseModel, Column
 
 
 class WechatBillModel(BaseModel):

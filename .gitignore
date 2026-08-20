@@ -1,9 +1,24 @@
 
-# ====== 本地配置（每个人本地不同，不进代码仓库）======
+# ====== 敏感配置文件（含API密钥、密码，绝不进仓库）======
+config/config.yaml
+config/prompts.yaml
+
+# ====== 用户数据（每人不同，不进仓库）======
+data/auth/
+data/user_configs/
+data/user_uploads/
+data/templates/
+data/task_history/
+data/comtypes_cache/
+data/browser_profile/
+data/memory/
+data/logs/
+
+# ====== 本地配置 ======
 local_configs/my_local.yaml
 local_configs/*.local.yaml
 
-# ====== 本地输出文件（不进代码仓库）======
+# ====== 本地输出文件 ======
 local_output/
 data/downloads/*
 !data/downloads/.gitkeep
@@ -11,6 +26,9 @@ data/screenshots/*
 !data/screenshots/.gitkeep
 data/output/*
 !data/output/.gitkeep
+
+# ====== Codely CLI ======
+.codely-cli/
 
 # ====== 缓存文件 ======
 __pycache__/

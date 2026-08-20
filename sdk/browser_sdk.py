@@ -17,55 +17,35 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.agent.smart_browser import SmartBrowser
 from src.storage import storage_manager
+from sdk.cookie_manager import cookie_manager
 
 
 class Cookie:
-    """Cookie存在Redis里，下次打开不用重新登录"""
-
-    _PREFIX = "agent:cookies:"
+    """Cookie管理 - 委托给 cookie_manager，自动按平台精简"""
 
     @classmethod
     def save(cls, key, cookies, expire_days=30):
-        # 存cookie到Redis，默认30天
-        if not storage_manager.is_redis_available:
-            return False
-        return storage_manager.redis.save_cookies(cls._PREFIX + key, cookies)
+        return cookie_manager.save(key, cookies, expire_days)
 
     @classmethod
     def ttl(cls, key):
-        # 查看cookie剩余有效时间（秒）
-        if not storage_manager.is_redis_available:
-            return -1
-        return storage_manager.redis.get_cookie_ttl(cls._PREFIX + key)
+        return cookie_manager.ttl(key)
 
     @classmethod
     def is_valid(cls, key):
-        # cookie是否还有效
-        return cls.ttl(key) > 0
+        return cookie_manager.is_valid(key)
 
     @classmethod
     def list_all(cls):
-        # 列出所有cookie状态
-        if not storage_manager.is_redis_available:
-            return []
-        return storage_manager.redis.list_cookies()
+        return cookie_manager.list_all()
 
     @classmethod
     def load(cls, key):
-        if not storage_manager.is_redis_available:
-            return []
-        return storage_manager.redis.load_cookies(cls._PREFIX + key) or []
+        return cookie_manager.load(key)
 
     @classmethod
     def delete(cls, key):
-        # 删掉cookie，下次要重新登录
-        if not storage_manager.is_redis_available:
-            return False
-        try:
-            storage_manager.redis.delete(cls._PREFIX + key)
-            return True
-        except Exception:
-            return False
+        return cookie_manager.delete(key)
 
 
 class Browser:
@@ -91,28 +71,32 @@ class Browser:
         if self._sb is None:
             self._sb = SmartBrowser()
             await self._sb.start(headless=self._headless)
-            # 启动时先从Redis恢复cookie
+            # 启动时从Redis恢复cookie
             if self.cookie_key:
-                cookies = Cookie.load(self.cookie_key)
+                cookies = cookie_manager.load(self.cookie_key)
                 if cookies:
                     try:
-                        await self._sb.browser.context.add_cookies(cookies) if hasattr(self._sb.browser, "context") and self._sb.browser.context else None
-                        self._cookies_restored = True
-                        print(f"[Browser] 恢复Cookie成功: {self.cookie_key} ({len(cookies)}条)")
+                        ctx = getattr(self._sb.browser, "context", None)
+                        if ctx:
+                            await ctx.add_cookies(cookies)
+                            self._cookies_restored = True
+                            print(f"[Browser] 恢复Cookie成功: {self.cookie_key} ({len(cookies)}条)")
                     except Exception as e:
                         print(f"[Browser] Cookie恢复失败: {e}")
         return self._sb
 
     async def close(self):
         if self._sb:
-            # 关闭前把最新cookie存到Redis
+            # 关闭前抓取最新cookie，但只在已登录时才保存
+            # 避免未登录状态下把好cookie覆盖成坏的
             if self.cookie_key:
                 try:
-                    cookies = await self._sb.browser.context.cookies() if hasattr(self._sb.browser, "context") and self._sb.browser.context else []
-                    Cookie.save(self.cookie_key, cookies)
-                    print(f"[Browser] Cookie已保存: {len(cookies)}条")
-                except (Exception, asyncio.CancelledError) as e:
-                    pass  # 关闭过程中CancelledError是正常的，不打印
+                    ctx = getattr(self._sb.browser, "context", None)
+                    if ctx:
+                        # logged_in=None 让cookie_manager自动检测是否已登录
+                        cookie_manager.capture_from_context(ctx, self.cookie_key, logged_in=None)
+                except Exception:
+                    pass
             try:
                 await self._sb.close()
             except (Exception, asyncio.CancelledError):
@@ -185,9 +169,77 @@ class Browser:
         print(f"{'='*50}\n")
         input()
         if self.cookie_key:
-            cookies = await self._sb.browser.context.cookies() if hasattr(self._sb.browser, "context") and self._sb.browser.context else []
-            Cookie.save(self.cookie_key, cookies)
-            print(f"[Browser] 登录完成，Cookie已保存: {len(cookies)}条, 30天有效)")
+            # 用户已手动确认登录成功，明确传 logged_in=True
+            ctx = getattr(self._sb.browser, "context", None)
+            if ctx:
+                cookies = await ctx.cookies()
+                cookie_manager.save(self.cookie_key, cookies)
+                print(f"[Browser] 登录完成，Cookie已保存: {len(cookies)}条")
+
+    async def wait_login_auto(self, timeout=300, interval=3000, on_success=None, on_timeout=None):
+        """
+        自动轮询检测登录成功（不阻塞事件循环，不需要用户在终端操作）
+
+        每 interval 秒检查一次浏览器cookie，当核心cookie出现（表示已登录）时自动保存。
+        适用于Web界面触发的Cookie刷新场景。
+
+        Args:
+            timeout: 最大等待秒数（默认5分钟）
+            interval: 轮询间隔秒数（默认3天）
+            on_success: 登录成功时的回调（同步或异步函数）
+            on_timeout: 超时时的回调
+
+        Returns:
+            True=登录成功，False=超时
+        """
+        import time as _time
+        await self.start()
+
+        if not self.cookie_key:
+            print("[Browser] 未设置cookie_key，无法自动检测登录")
+            return False
+
+        core_cookies = cookie_manager.get_core_cookies(self.cookie_key)
+        if not core_cookies:
+            print(f"[Browser] {self.cookie_key}: 未配置核心cookie，回退到手动确认")
+            return await self.wait_login("请登录后按回车继续")
+
+        print(f"[Browser] 开始自动检测登录（cookie_key={self.cookie_key}，超时{timeout}秒）")
+        start = _time.time()
+
+        while _time.time() - start < timeout:
+            await asyncio.sleep(interval)
+            try:
+                ctx = getattr(self._sb.browser, "context", None)
+                if not ctx:
+                    continue
+                cookies = await ctx.cookies()
+                # 检查核心cookie是否出现
+                for c in cookies:
+                    name = c.get("name", "")
+                    value = c.get("value", "")
+                    if name in core_cookies and value:
+                        # 登录成功！保存cookie
+                        cookie_manager.save(self.cookie_key, cookies)
+                        elapsed = round(_time.time() - start, 1)
+                        print(f"[Browser] 自动检测到登录成功（耗时{elapsed}秒），Cookie已保存: {len(cookies)}条")
+                        if on_success:
+                            result = on_success()
+                            if asyncio.iscoroutine(result):
+                                await result
+                        return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[Browser] 轮询检测异常: {e}")
+
+        # 超时
+        print(f"[Browser] ⏰ 登录超时（{timeout}秒）")
+        if on_timeout:
+            result = on_timeout()
+            if asyncio.iscoroutine(result):
+                await result
+        return False
 
     async def check_login(self, login_url, success_hint="页面显示首页或工作台"):
         """
