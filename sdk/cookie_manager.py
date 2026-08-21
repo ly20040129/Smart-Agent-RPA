@@ -134,17 +134,27 @@ class CookieManager:
 
     def capture_from_context(self, context, key: str, logged_in: bool = None) -> bool:
         """从Playwright Context抓取"""
+        import asyncio
         try:
-            cookies = context.cookies()
+            # 用 asyncio.run 执行异步的 cookies()
+            cookies = asyncio.run(context.cookies())
             if not cookies:
                 return False
-            # 没传logged_in就自动检测
             if logged_in is None:
                 logged_in = self._is_logged_in(cookies, key)
             if not logged_in:
                 logger.info(f"[Cookie] {key}: 未登录，跳过保存")
                 return False
             filtered = self._filter(cookies, key)
+            return self._save_to_redis(key, filtered)
+        except RuntimeError as e:
+            # 如果已经在事件循环中，用另一个方式
+            try:
+                loop = asyncio.get_running_loop()
+                # 如果在运行中的循环里，用 run_coroutine_threadsafe 或 create_task
+                cookies = asyncio.run_coroutine_threadsafe(context.cookies(), loop).result(timeout=10)
+            except Exception:
+                raise
             return self._save_to_redis(key, filtered)
         except Exception as e:
             logger.error(f"抓取cookie失败: {e}")
@@ -243,21 +253,21 @@ class CookieManager:
 
     def _filter(self, cookies: List[Dict], key: str) -> List[Dict]:
         """只保留核心cookie，同名去重（保留域名最短的）"""
-        core_names = self.get_core_cookies(key)
-        if not core_names:
-            return cookies
+        # core_names = self.get_core_cookies(key)
+        # if not core_names:
+        return cookies
 
-        filtered = [c for c in cookies if c.get("name") in core_names]
-        seen = {}
-        for c in filtered:
-            name = c.get("name", "")
-            if name not in seen or len(c.get("domain", "")) < len(seen[name].get("domain", "")):
-                seen[name] = c
+        # filtered = [c for c in cookies if c.get("name") in core_names]
+        # seen = {}
+        # for c in filtered:
+        #     name = c.get("name", "")
+        #     if name not in seen or len(c.get("domain", "")) < len(seen[name].get("domain", "")):
+        #         seen[name] = c
 
-        result = list(seen.values())
-        if len(result) != len(cookies):
-            logger.info(f"[Cookie] {key}: 精简 {len(cookies)} → {len(result)} 个")
-        return result
+        # result = list(seen.values())
+        # if len(result) != len(cookies):
+        #     logger.info(f"[Cookie] {key}: 精简 {len(cookies)} → {len(result)} 个")
+        # return result
 
     def _load_key_map(self) -> Dict[str, str]:
         if not storage_manager.is_redis_available:
