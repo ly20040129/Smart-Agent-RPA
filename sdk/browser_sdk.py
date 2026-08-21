@@ -22,7 +22,7 @@ from sdk.cookie_manager import cookie_manager
 
 
 class Cookie:
-    """Cookie管理 - 委托给 cookie_manager，自动按平台精简"""
+    """旧接口兼容 - 委托给 cookie_manager"""
 
     @classmethod
     def save(cls, key, cookies, expire_days=30):
@@ -72,7 +72,6 @@ class Browser:
         if self._sb is None:
             self._sb = SmartBrowser()
             await self._sb.start(headless=self._headless)
-            # 启动时从Redis恢复cookie
             if self.cookie_key:
                 cookies = cookie_manager.load(self.cookie_key)
                 if cookies:
@@ -81,21 +80,19 @@ class Browser:
                         if ctx:
                             await ctx.add_cookies(cookies)
                             self._cookies_restored = True
-                            print(f"[Browser] 恢复Cookie成功: {self.cookie_key} ({len(cookies)}条)")
+                            print(f"[Browser] 恢复Cookie: {self.cookie_key} ({len(cookies)}条)")
                     except Exception as e:
                         print(f"[Browser] Cookie恢复失败: {e}")
         return self._sb
 
     async def close(self):
         if self._sb:
-            # 关闭前抓取最新cookie，但只在已登录时才保存
-            # 避免未登录状态下把好cookie覆盖成坏的
+            # 只在已登录时才抓取，避免把好cookie覆盖成坏的
             if self.cookie_key:
                 try:
                     ctx = getattr(self._sb.browser, "context", None)
                     if ctx:
-                        # logged_in=None 让cookie_manager自动检测是否已登录
-                        cookie_manager.capture_from_context(ctx, self.cookie_key, logged_in=None)
+                        cookie_manager.capture_from_context(ctx, self.cookie_key)
                 except Exception:
                     pass
             try:
@@ -163,19 +160,16 @@ class Browser:
         return await self._sb.browser.screenshot(name) if hasattr(self._sb.browser, "screenshot") else None
 
     async def wait_login(self, prompt="请扫码登录，完成后按回车继续..."):
-        # 需要人工扫码时调用，扫完按回车自动存cookie
+        """等用户扫码登录，按回车后自动保存cookie"""
         await self.start()
-        print(f"\n{'='*50}")
-        print(f"[Browser] {prompt}")
-        print(f"{'='*50}\n")
+        print(f"\n[Browser] {prompt}\n")
         input()
         if self.cookie_key:
-            # 用户已手动确认登录成功，明确传 logged_in=True
             ctx = getattr(self._sb.browser, "context", None)
             if ctx:
                 cookies = await ctx.cookies()
                 cookie_manager.save(self.cookie_key, cookies)
-                print(f"[Browser] 登录完成，Cookie已保存: {len(cookies)}条")
+                print(f"[Browser] Cookie已保存: {len(cookies)}条")
 
     async def wait_login_auto(self, timeout=300, interval=3, on_success=None, on_timeout=None, on_progress=None):
         """

@@ -18,6 +18,11 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from sdk import Browser, LocalConfig
+from sdk.platforms import init_platforms, get_platform
+
+# 初始化平台工具类
+init_platforms()
+wechat_pay = get_platform("wechat_pay")
 
 TASK_NAME = "公众号资金账单"
 COOKIE_KEY = "wechat_pay"
@@ -52,6 +57,10 @@ async def run(date_from=None, date_to=None, output_dir=None, progress_callback=N
             progress_callback(step, msg)
 
     log(1, f"开始执行：{TASK_NAME}，日期范围 {date_from} ~ {date_to}")
+
+    # cookie预检查（平台工具类）
+    if not wechat_pay.is_cookie_valid(COOKIE_KEY):
+        log(1, f"Cookie不存在或已过期（{COOKIE_KEY}），浏览器打开后可能需要手动登录")
 
     downloaded_file = None
 

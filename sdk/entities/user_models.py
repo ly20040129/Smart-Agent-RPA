@@ -1,11 +1,21 @@
-# 用户和部门的表定义
-# 目前用户数据存在JSON里，这里预留了MySQL表定义
-# 后续用户多了可以迁移到MySQL
-from entity_class.base import BaseModel, Column
+# -*- coding: utf-8 -*-
+"""
+用户和部门的表实体
+
+目前用户数据存在JSON里，这里预留了MySQL表定义
+后续用户多了可以迁移到MySQL
+"""
+from sdk.entities import register_entity, Column
 
 
-class UserTable(BaseModel):
+@register_entity("sys_users")
+class SysUser:
+    """用户表"""
     table_name = "sys_users"
+    platform = ""
+    cookie_key = ""
+    description = "用户表"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     username      = Column("username", "VARCHAR(100) UNIQUE", "用户名")
     password_hash = Column("password_hash", "VARCHAR(300)", "密码哈希")
@@ -19,8 +29,14 @@ class UserTable(BaseModel):
     last_login_at = Column("last_login_at", "DATETIME", "最后登录")
 
 
-class DepartmentTable(BaseModel):
+@register_entity("sys_departments")
+class SysDepartment:
+    """部门表"""
     table_name = "sys_departments"
+    platform = ""
+    cookie_key = ""
+    description = "部门表"
+
     id          = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     dept_code   = Column("dept_code", "VARCHAR(50) UNIQUE", "部门编码")
     dept_name   = Column("dept_name", "VARCHAR(100)", "部门名称")

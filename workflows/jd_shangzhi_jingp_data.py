@@ -1,16 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-京东商智竞品数据统计
-调用API → 匹配Excel → 写入保存
-
-cookie来源：从Redis自动读取（cookie_manager），不再需要用户上传cookie文件。
-  前提：先用浏览器方式登录过京东商智，cookie已自动存入Redis。
-"""
+"""京东商智竞品数据统计 - 调API匹配Excel写入保存，cookie从Redis自动读取"""
 import os
 import re
 import sys
-import json
-import requests
+import asyncio
 import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,6 +15,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 from loguru import logger
 from src.core.config import get_config
 from sdk.cookie_manager import cookie_manager
+from sdk.platforms import init_platforms, get_platform
+
+# 初始化平台工具类
+init_platforms()
+jd = get_platform("jd")
 
 COOKIE_KEY = "jd_shangzhi"
 
@@ -40,33 +38,19 @@ def fmt(val):
     return str(int(val)) if isinstance(val, float) and val == int(val) else str(val)
 
 
-def load_cookie_from_redis():
+# ==================== API调用（非官方网页接口，cookie认证） ====================
+
+def _get_extra_headers():
     """
-    从Redis读取cookie，转成requests能用的字典
+    商智特有的请求头（用户私有信息从config.yaml读取）
 
-    Redis中存的是Playwright格式: [{"name":"pin","value":"xxx","domain":".jd.com"}]
-    requests需要: {"pin": "xxx", "thor": "yyy"}
+    这些头会merge到平台默认头(default_headers)上，
+    其中Referer会覆盖默认的vcnew.jd.com为商智的sz.jd.com
     """
-    # 先检查cookie是否存在且包含登录态
-    if not cookie_manager.ensure_valid(COOKIE_KEY):
-        raise RuntimeError(
-            f"Cookie不存在或已过期（平台: {COOKIE_KEY}）。\n"
-            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录。"
-        )
-    cookie_dict = cookie_manager.load_as_dict(COOKIE_KEY)
-    logger.info(f"从Redis加载cookie: {COOKIE_KEY} ({len(cookie_dict)}个)")
-    return cookie_dict
-
-
-# ==================== API调用 ====================
-
-def _get_headers():
-    """构建请求头，用户私有信息从config.yaml读取"""
     cfg = get_config().config_data
     jd_cfg = cfg.get('jd_shangzhi', {})
 
     return {
-        "accept": "application/json, text/plain, */*",
         "accept-encoding": "gzip, deflate, br",
         "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
         "p-pin": jd_cfg.get('p_pin', ''),
@@ -74,13 +58,16 @@ def _get_headers():
         "user-mnp": jd_cfg.get('user_mnp', ''),
         "user-mup": jd_cfg.get('user_mup', ''),
         "uuid": jd_cfg.get('uuid', ''),
-        "x-requested-with": "XMLHttpRequest",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
 
 
-def call_api(date_str, cookie_dict):
-    """调用京东商智API"""
+async def call_api(date_str):
+    """
+    调用京东商智API（非官方网页接口）
+
+    使用 jd.web_api() 调用：cookie自动注入、失效自动检测+刷新重试。
+    商智特有请求头通过headers参数传入，merge到平台默认头。
+    """
     url = "https://sz.jd.com/sz/api/competitionAnalysis/getCompeteProDetail.ajax"
     params = {
         "date": date_str,
@@ -91,23 +78,29 @@ def call_api(date_str, cookie_dict):
         "unitType": "1",
     }
 
-    resp = requests.get(url, headers=_get_headers(), params=params,
-                        cookies=cookie_dict, timeout=30).json()
+    # 非官方API调用：web_api自动注入cookie + 失效检测 + 自动刷新重试
+    result = await jd.web_api(
+        url=url,
+        cookie_key=COOKIE_KEY,
+        method="GET",
+        params=params,
+        headers=_get_extra_headers(),
+    )
 
-    # 检测cookie是否过期
-    status = resp.get('status', '')
-    if status in ('1', '2', '99') or 'login' in str(resp).lower()[:500]:
-        # cookie过期，主动清除Redis中的旧cookie
+    # 商智特有响应格式校验（status字段，与京麦的success字段不同）
+    status = result.get('status', '')
+    if status in ('1', '2', '99'):
+        # web_api的_is_expired未覆盖商智status码，此处补充检测
         cookie_manager.delete(COOKIE_KEY)
         raise RuntimeError(
-            f"京东商智API返回登录过期，cookie已自动清除。\n"
-            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东。"
+            f"京东商智API返回登录过期（status={status}），cookie已自动清除。\n"
+            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东商智。"
         )
 
     if status != '0':
-        raise RuntimeError(f"API异常: {resp}")
+        raise RuntimeError(f"API异常: {result}")
 
-    return resp.get('content', {}).get('data', [])
+    return result.get('content', {}).get('data', [])
 
 
 # ==================== 匹配写入 ====================
@@ -131,7 +124,7 @@ def match_and_write(df, sku_map):
 
 # ==================== 主入口 ====================
 
-def process(date_str=None, excel_path=None, output_dir=None, **kwargs):
+async def process(date_str=None, excel_path=None, output_dir=None, **kwargs):
     """
     主入口（被task_executor调用）
 
@@ -140,7 +133,7 @@ def process(date_str=None, excel_path=None, output_dir=None, **kwargs):
         excel_path: Excel模板文件路径（从Web界面上传或用户配置）
         output_dir: 输出目录（从Web界面选择）
 
-    cookie不再需要用户上传，自动从Redis读取。
+    cookie不再需要用户上传，自动从Redis读取（由jd.web_api管理）。
     """
     # 1. 日期处理
     if not date_str:
@@ -154,11 +147,15 @@ def process(date_str=None, excel_path=None, output_dir=None, **kwargs):
 
     logger.info(f"查询日期: {date_str}")
 
-    # 3. 从Redis加载Cookie（不需要用户上传了）
-    cookie_dict = load_cookie_from_redis()
+    # 3. cookie预检查（平台工具类）
+    if not jd.is_cookie_valid(COOKIE_KEY):
+        raise RuntimeError(
+            f"Cookie不存在或已过期（平台: {COOKIE_KEY}）。\n"
+            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东商智。"
+        )
 
-    # 4. 调用API
-    data_list = call_api(date_str, cookie_dict)
+    # 4. 调用API（非官方网页接口，cookie由jd.web_api自动管理）
+    data_list = await call_api(date_str)
     logger.info(f"API返回: {len(data_list)} 个SKU")
 
     # 5. 构建SKU索引

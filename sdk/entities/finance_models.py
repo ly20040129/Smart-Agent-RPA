@@ -1,11 +1,20 @@
-# 财务部门的数据表
-# 新增表：复制一个class，改table_name和列就行
-from entity_class.base import BaseModel, Column
+# -*- coding: utf-8 -*-
+"""
+财务部门的数据表实体
+
+包含微信资金账单、京东销售、天猫库存、财务日报汇总
+"""
+from sdk.entities import register_entity, Column
 
 
-class WechatBillModel(BaseModel):
-    # 公众号微信资金账单
+@register_entity("finance_wechat_bill")
+class WechatBill:
+    """公众号微信资金账单"""
     table_name = "finance_wechat_bill"
+    platform = "wechat_pay"
+    cookie_key = "wechat_pay"
+    description = "公众号微信资金账单"
+
     id           = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     bill_date    = Column("bill_date", "DATE", "账单日期")
     trade_no     = Column("trade_no", "VARCHAR(100)", "交易单号")
@@ -21,9 +30,14 @@ class WechatBillModel(BaseModel):
     task_id      = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class JdSalesModel(BaseModel):
-    # 京东销售出库报表
+@register_entity("finance_jd_sales")
+class JdSales:
+    """京东销售出库报表"""
     table_name = "finance_jd_sales"
+    platform = "jd"
+    cookie_key = "jd_shop"
+    description = "京东销售出库报表"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     sale_date     = Column("sale_date", "DATE", "销售日期")
     jd_order_no   = Column("jd_order_no", "VARCHAR(100)", "京东订单号")
@@ -44,9 +58,14 @@ class JdSalesModel(BaseModel):
     task_id       = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class TmallStockModel(BaseModel):
-    # 天猫保税仓库存/出库
+@register_entity("finance_tmall_stock")
+class TmallStock:
+    """天猫保税仓库存/出库"""
     table_name = "finance_tmall_stock"
+    platform = "tmall"
+    cookie_key = ""
+    description = "天猫保税仓库存/出库"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     stat_date     = Column("stat_date", "DATE", "统计日期")
     sku_code      = Column("sku_code", "VARCHAR(100)", "SKU编码")
@@ -62,9 +81,14 @@ class TmallStockModel(BaseModel):
     task_id       = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class DailyFinanceReport(BaseModel):
-    # 财务日报汇总（各平台）
+@register_entity("finance_daily_report")
+class DailyFinanceReport:
+    """财务日报汇总（各平台）"""
     table_name = "finance_daily_report"
+    platform = ""
+    cookie_key = ""
+    description = "财务日报汇总（各平台）"
+
     id           = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     report_date  = Column("report_date", "DATE", "报表日期")
     platform     = Column("platform", "VARCHAR(100)", "平台")

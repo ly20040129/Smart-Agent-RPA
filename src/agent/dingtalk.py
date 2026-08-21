@@ -2,28 +2,9 @@
 """
 钉钉统一模块
 
-两种机器人，分开放在同一个文件里：
-
-  ┌─────────────────┬──────────────────┬─────────────────┐
-  │     类名        │    DingTalkWebhook │   DingTalkApp   │
-  ├─────────────────┼──────────────────┼─────────────────┤
-  │  机器人类型      │  Webhook机器人     │  自建应用机器人   │
-  │  能做什么        │  发文本/Markdown   │  发文件附件       │
-  │  配置            │  webhook + secret │  app_key+secret  │
-  │  API入口         │  oapi/webhook     │  oapi/gettoken   │
-  └─────────────────┴──────────────────┴─────────────────┘
-
-用法：
-    from src.agent.dingtalk import DingTalkWebhook, DingTalkApp
-
-    # 1. Webhook机器人发消息
-    wh = DingTalkWebhook(webhook="https://oapi.dingtalk.com/robot/send?access_token=xxx")
-    wh.send_text("任务完成")
-    wh.send_markdown("标题", "### 内容")
-
-    # 2. 自建应用发文件
-    app = DingTalkApp(app_key="xxx", app_secret="xxx", agent_id=123)
-    app.send_file("D:/report.xlsx", userid="user123")
+两类机器人：
+  DingTalkWebhook - Webhook机器人，发文本/Markdown消息
+  DingTalkApp      - 自建应用机器人，发文件附件
 """
 import json
 import time
@@ -38,11 +19,8 @@ from loguru import logger
 import requests
 
 
-# ============================================================
-# 1. DingTalkWebhook — Webhook机器人
-# ============================================================
 class DingTalkWebhook:
-    """通过Webhook发送文本/Markdown消息"""
+    """Webhook机器人 - 发消息"""
 
     def __init__(self, webhook: str = "", secret: str = "", timeout: int = 10):
         self.webhook = webhook
@@ -54,7 +32,6 @@ class DingTalkWebhook:
         return bool(self.webhook)
 
     def send_text(self, content: str, at_mobiles: List[str] = None, at_all: bool = False) -> Dict:
-        """发送纯文本消息"""
         return self._post({
             "msgtype": "text",
             "text": {"content": content},
@@ -62,14 +39,12 @@ class DingTalkWebhook:
         })
 
     def send_markdown(self, title: str, text: str, at_mobiles: List[str] = None, at_all: bool = False) -> Dict:
-        """发送Markdown消息"""
         return self._post({
             "msgtype": "markdown",
             "markdown": {"title": title, "text": text},
             "at": {"atMobiles": at_mobiles or [], "isAtAll": at_all}
         })
 
-    # ---- 业务快捷方法 ----
     def notify_task_started(self, task_name: str, username: str = "") -> Dict:
         return self.send_markdown(
             f"任务开始: {task_name}",
@@ -89,7 +64,6 @@ class DingTalkWebhook:
             at_all=True
         )
 
-    # ---- 内部方法 ----
     def _post(self, payload: Dict) -> Dict:
         if not self.webhook:
             return {"success": False, "skipped": True, "error": "未配置webhook"}
@@ -107,6 +81,7 @@ class DingTalkWebhook:
             return {"success": False, "error": str(e)}
 
     def _build_signed_url(self) -> str:
+        """加签模式的URL"""
         if not self.secret:
             return self.webhook
         timestamp = str(round(time.time() * 1000))
@@ -121,11 +96,8 @@ class DingTalkWebhook:
         return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ============================================================
-# 2. DingTalkApp — 自建应用机器人
-# ============================================================
 class DingTalkApp:
-    """通过钉钉自建应用发送文件给指定用户"""
+    """自建应用机器人 - 发文件"""
 
     def __init__(self, app_key: str = "", app_secret: str = "", agent_id: str = "", timeout: int = 30):
         self.app_key = app_key
@@ -138,7 +110,6 @@ class DingTalkApp:
         return bool(self.app_key and self.app_secret and self.agent_id)
 
     def send_file(self, file_path: str, userid: str) -> Dict:
-        """发送文件给钉钉用户"""
         if not self.enabled:
             return {"success": False, "error": "钉钉自建应用配置不完整(需app_key+app_secret+agent_id)"}
         if not userid:
@@ -146,24 +117,19 @@ class DingTalkApp:
         if not os.path.exists(file_path):
             return {"success": False, "error": f"文件不存在: {file_path}"}
 
-        # 1) 获取 access_token
         token = self._get_access_token()
         if not token:
             return {"success": False, "error": "获取access_token失败"}
 
-        # 2) 上传文件到钉盘
         media_id = self._upload_media(token, file_path)
         if not media_id:
             return {"success": False, "error": "上传文件到钉盘失败"}
 
-        # 3) 发送文件消息
-        ok = self._send_file_msg(token, media_id, userid)
-        if ok:
+        if self._send_file_msg(token, media_id, userid):
             logger.info(f"钉钉文件发送成功: {os.path.basename(file_path)}")
             return {"success": True, "media_id": media_id}
         return {"success": False, "error": "发送文件消息失败"}
 
-    # ---- 内部方法 ----
     def _get_access_token(self) -> Optional[str]:
         resp = requests.get(
             "https://oapi.dingtalk.com/gettoken",
@@ -210,13 +176,11 @@ class DingTalkApp:
 
 
 # ============================================================
-# 构建函数：从配置中读取并实例化
+# 从配置构建实例
 # ============================================================
+
 def build_webhook(task_config: Dict = None, user_config: Dict = None) -> DingTalkWebhook:
-    """
-    构建 Webhook 通知器
-    优先级：task_config > user_config > config.yaml全局
-    """
+    """优先级：task_config > user_config > config.yaml全局"""
     webhook = ""
     secret = ""
 
@@ -244,10 +208,7 @@ def build_webhook(task_config: Dict = None, user_config: Dict = None) -> DingTal
 
 
 def build_app(user_config: Dict = None) -> DingTalkApp:
-    """
-    构建自建应用机器人
-    从 user_config 或 config.yaml 读取 app_key/app_secret/agent_id
-    """
+    """从 user_config 或 config.yaml 读取配置"""
     cfg = {}
     if user_config:
         cfg = user_config.get("delivery", {}).get("dingtalk", {})

@@ -16,7 +16,7 @@ llm:
   deepseek:
     api_key: "ms-826a12e8-7c25-4878-bdda-5b8d7fcae594"
     base_url: "https://api-inference.modelscope.cn/v1"
-    model: "deepseek-ai/DeepSeek-V4-Flash-0731"
+    model: "Qwen/Qwen3-235B-A22B"
     temperature: 0.1
     timeout: 60
 

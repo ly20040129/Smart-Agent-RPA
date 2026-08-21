@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-PDD商家版视频自动上传工具
-策略：DrissionPage浏览器生成anti-content + requests分片上传 + 浏览器fetch调live接口
-
-通过Web界面触发时，参数从YAML配置传入：
-  video_file: 视频文件路径
-  desc:       视频描述
-  goods_id:   商品ID
-  cookie:     拼多多Cookie字符串（从浏览器F12复制）
-
-也可单独运行：python workflows/pdd_upload.py
-"""
+"""PDD视频上传 - DrissionPage生成anti-content + requests分片上传 + 浏览器fetch发布"""
 import sys
 import os
 import math
@@ -25,6 +14,12 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 from DrissionPage import ChromiumPage, ChromiumOptions
+
+from sdk.platforms import init_platforms, get_platform
+
+# 初始化平台工具类
+init_platforms()
+pdd = get_platform("pdd")
 
 # ============ 默认配置（测试运行时用，Web触发时由参数覆盖）============
 
@@ -343,6 +338,13 @@ def run(video_file=None, desc=None, goods_id=None, **kwargs):
 
     if not os.path.exists(video_file):
         raise RuntimeError(f"视频文件不存在: {video_file}")
+
+    # cookie预检查（平台工具类）
+    if not pdd.is_cookie_valid(COOKIE_KEY):
+        raise RuntimeError(
+            f"Cookie不存在或已过期（平台: {COOKIE_KEY}）。\n"
+            f"请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录拼多多。"
+        )
 
     # cookie从Redis自动读取，不传给PDDAPIUploader时它会自己读
     uploader = PDDAPIUploader()

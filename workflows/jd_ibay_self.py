@@ -12,7 +12,13 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from sdk import Browser, LocalConfig
-from entity_class import JdSalesModel, DailyFinanceReport
+from sdk.entities import init_entities, get_entity
+
+# 初始化实体类注册
+init_entities()
+# 旧代码引用了这两个实体类，迁移到 sdk/entities/ 后通过注册表获取
+JdSalesModel = get_entity("finance_jd_sales")
+DailyFinanceReport = get_entity("finance_daily_report")
 
 # ====== 任务配置 ======
 TASK_NAME = "京东艾贝自营仓销售出库正式"

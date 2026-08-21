@@ -34,6 +34,14 @@ from src.storage import storage_manager
 app = FastAPI(title="智能体平台", version="3.0.0")
 config = get_config()
 
+# ==================== 启动时自动注册实体类和平台工具类 ====================
+@app.on_event("startup")
+async def _init_registries():
+    from sdk.entities import init_entities
+    from sdk.platforms import init_platforms
+    init_entities()
+    init_platforms()
+
 # ==================== 中间件 ====================
 app.add_middleware(
     CORSMiddleware,
@@ -759,11 +767,7 @@ class ChatRequest(_BM):
 
 
 def _match_task_id(text: str, visible_tasks: list) -> Optional[str]:
-    """
-    模糊匹配任务：从用户输入或LLM回复中找到最匹配的任务
-    
-    匹配顺序：精确filename → 精确name → 模糊匹配name
-    """
+    """模糊匹配任务：精确filename → 精确name → 包含匹配 → 相似度匹配"""
     text = text.strip()
     
     # 1. 精确匹配 filename

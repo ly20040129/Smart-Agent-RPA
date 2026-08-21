@@ -1,10 +1,20 @@
-# 业务部门的数据表（销售、库存、运营等）
-from entity_class.base import BaseModel, Column
+# -*- coding: utf-8 -*-
+"""
+业务部门的数据表实体
+
+包含每日销售明细、每日库存、运营日报、客户反馈
+"""
+from sdk.entities import register_entity, Column
 
 
-class SalesDailyModel(BaseModel):
-    # 每日销售明细
+@register_entity("biz_sales_daily")
+class SalesDaily:
+    """每日销售明细"""
     table_name = "biz_sales_daily"
+    platform = ""
+    cookie_key = ""
+    description = "每日销售明细"
+
     id           = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     sale_date    = Column("sale_date", "DATE", "销售日期")
     platform     = Column("platform", "VARCHAR(100)", "平台")
@@ -19,9 +29,14 @@ class SalesDailyModel(BaseModel):
     task_id      = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class InventoryDailyModel(BaseModel):
-    # 每日库存
+@register_entity("biz_inventory_daily")
+class InventoryDaily:
+    """每日库存"""
     table_name = "biz_inventory_daily"
+    platform = ""
+    cookie_key = ""
+    description = "每日库存"
+
     id          = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     stat_date   = Column("stat_date", "DATE", "统计日期")
     sku_code    = Column("sku_code", "VARCHAR(100)", "SKU编码")
@@ -36,9 +51,14 @@ class InventoryDailyModel(BaseModel):
     task_id     = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class OperationDailyModel(BaseModel):
-    # 运营日报
+@register_entity("biz_operation_daily")
+class OperationDaily:
+    """运营日报"""
     table_name = "biz_operation_daily"
+    platform = ""
+    cookie_key = ""
+    description = "运营日报"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     stat_date     = Column("stat_date", "DATE", "统计日期")
     platform      = Column("platform", "VARCHAR(100)", "平台")
@@ -54,9 +74,14 @@ class OperationDailyModel(BaseModel):
     task_id       = Column("task_id", "VARCHAR(200)", "任务ID")
 
 
-class CustomerFeedbackModel(BaseModel):
-    # 客户反馈/投诉
+@register_entity("biz_customer_feedback")
+class CustomerFeedback:
+    """客户反馈/投诉"""
     table_name = "biz_customer_feedback"
+    platform = ""
+    cookie_key = ""
+    description = "客户反馈/投诉"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     fb_date       = Column("fb_date", "DATE", "反馈日期")
     customer      = Column("customer", "VARCHAR(200)", "客户名")

@@ -55,12 +55,21 @@ smart_agent_platform/
 │   └── jd_ibay_sales.py    京东销售数据清洗
 │
 ├── sdk/                    ── 封装好的工具SDK ──
-│   ├── browser_sdk.py      浏览器操作（55个方法：智能+原生）
+│   ├── browser_sdk.py      浏览器操作（智能+原生方法）
 │   ├── desktop_sdk.py      桌面应用操作（控件+图像识别，金蝶K/3等）
-│   ├── mysql_sdk.py        数据库操作
+│   ├── cookie_manager.py   多平台Cookie管理（自动检测+浏览器刷新）
+│   ├── mysql_sdk.py        数据库操作（实体类自动建表）
 │   ├── excel_sdk.py        Excel处理
 │   ├── chart_sdk.py        图表生成
-│   └── local_config.py     本地路径配置
+│   ├── local_config.py     本地路径配置
+│   ├── entities/           ★ 实体类（每个任务一个，带表名唯一标识）
+│   │   ├── __init__.py     基类+Column()+@register_entity+自动扫描
+│   │   └── jd_ibay_sales.py 京东艾贝出库实体
+│   └── platforms/          ★ 平台工具类（Cookie+API+失效刷新）
+│       ├── __init__.py     基类+@register_platform+自动扫描
+│       ├── jd.py           京东（.jd.com）
+│       ├── pdd.py          拼多多（.pdd.com）
+│       └── wechat_pay.py   微信支付（.weixin.qq.com）
 │
 ├── models/                 ── 数据表定义 ──
 │   ├── base.py             SQLAlchemy基类
@@ -151,6 +160,118 @@ src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
 
 ---
 
+## 平台工具类（sdk/platforms/）
+
+每个平台一个工具类，封装该平台的 **Cookie管理 + API调用 + 失效检测 + 自动刷新**。
+启动时自动扫描注册，新增平台只加文件不改核心代码。
+
+### 已注册平台
+
+| 平台 | 根域名 | Cookie Key | 失效检测 |
+|------|--------|-----------|---------|
+| 京东 (jd) | .jd.com | jd_shop, jd_shop_ibay, jd_shangzhi | 401/302 + 'login' + success:false |
+| 拼多多 (pdd) | .pdd.com | pdd | 401/302/403 + 'login' + 错误码 |
+| 微信支付 (wechat_pay) | .weixin.qq.com | wechat_pay | 401/302/403 + redirect + ret_code |
+
+### 核心方法
+
+```python
+from sdk.platforms import get_platform
+
+jd = get_platform("jd")
+
+# Cookie管理
+cookie_header = jd.get_cookie_header("jd_shop_ibay")   # 获取Cookie字符串
+is_valid = jd.is_cookie_valid("jd_shop_ibay")           # 检查有效性
+await jd.refresh_cookie("jd_shop_ibay")                  # 触发浏览器刷新
+
+# API调用（自动注入Cookie + 失效检测 + 刷新重试）
+data = await jd.web_api(
+    url="https://vcf.jd.com/api/finance/saleBill/list",
+    cookie_key="jd_shop_ibay",
+    method="POST",
+    data='[{"bizType":"4","page":1}]',
+)
+
+# 分页获取（通用分页逻辑）
+all_data = await jd.fetch_paged(
+    url="https://vcf.jd.com/api/finance/saleBill/list",
+    cookie_key="jd_shop_ibay",
+    body_template={"bizType": "4"},
+    date_from="2026-08-01",
+    date_to="2026-08-20",
+)
+```
+
+### 新增平台
+
+```python
+# sdk/platforms/taobao.py
+from sdk.platforms import register_platform, PlatformBase
+
+@register_platform("taobao")
+class TaobaoPlatform(PlatformBase):
+    root_domain = ".taobao.com"
+    default_headers = {"Referer": "https://shop.taobao.com/", ...}
+
+    def _is_expired(self, resp, text):
+        return resp.status in (401, 302) or "login" in text.lower()
+```
+
+保存后重启服务，自动注册。
+
+---
+
+## 实体类（sdk/entities/）
+
+每个任务/数据表对应一个实体类，带 `table_name` 唯一标识。
+配合 `MySQL SDK` 实现自动建表、数据存储、模糊匹配列名。
+
+### 已注册实体
+
+| 实体类 | 表名 | 平台 | Cookie Key |
+|--------|------|------|-----------|
+| JD_Ibay_Sales | jd_ibay_sales | jd | jd_shop_ibay |
+
+### 用法
+
+```python
+from sdk.entities import get_entity
+from sdk.mysql_sdk import MySQL
+
+entity = get_entity("jd_ibay_sales")
+
+# 自动建表 + 存Excel数据（模糊匹配列名）
+MySQL.save("data/downloads/report.xlsx", table=entity)
+
+# 查询
+rows = MySQL.query(entity, limit=100)
+
+# 插入单行
+MySQL.insert(entity, {"order_no": "JD001", "amount": 99.5})
+```
+
+### 新增实体
+
+```python
+# sdk/entities/pdd_order.py
+from sdk.entities import register_entity, Column
+
+@register_entity("pdd_order")
+class PDD_Order:
+    table_name = "pdd_order"
+    platform = "pdd"
+    cookie_key = "pdd"
+
+    order_id = Column("order_id", "VARCHAR(100)", "订单号")
+    amount = Column("amount", "DECIMAL(10,2)", "金额")
+    create_time = Column("create_time", "DATETIME", "创建时间")
+```
+
+保存后重启服务，自动注册。
+
+---
+
 ## 新增一个自动化任务的步骤
 
 ### 第1步：写自动化脚本
@@ -158,18 +279,37 @@ src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
 
 ```python
 # workflows/my_task.py
-from sdk.browser_sdk import Browser, Cookie
+from sdk.browser_sdk import Browser
+from sdk.platforms import init_platforms, get_platform
+from sdk.entities import init_entities, get_entity
+from sdk.mysql_sdk import MySQL
+
+init_platforms()
+init_entities()
+
+jd = get_platform("jd")
+entity = get_entity("jd_ibay_sales")
 
 async def run(date_from=None, date_to=None, output_dir=None, **kwargs):
     """主函数，参数名要和YAML的params_input对应"""
-    async with Browser(cookie_key="my_site") as b:
-        await b.open("https://example.com")
-        await b.wait_login("请扫码登录")
-        await b.click("查询按钮")
-        await b.fill("日期输入框", date_from)
-        # ... 更多操作
-        path = await b.download("下载按钮")
-        return path
+
+    # API版：用平台工具类（Cookie自动管理+失效自动刷新）
+    data = await jd.fetch_paged(
+        url="https://vcf.jd.com/api/finance/saleBill/list",
+        cookie_key="jd_shop_ibay",
+        body_template={"bizType": "4"},
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+    # 存Excel + 存MySQL（实体类指定表名，自动建表）
+    import pandas as pd
+    df = pd.DataFrame(data)
+    out_file = f"data/downloads/result.xlsx"
+    df.to_excel(out_file, index=False)
+    MySQL.save(out_file, table=entity)
+
+    return out_file
 ```
 
 ### 第2步（可选）：写数据清洗脚本

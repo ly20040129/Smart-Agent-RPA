@@ -1,10 +1,20 @@
-# 任务相关的数据表（平台内部用，一般不用改）
-from entity_class.base import BaseModel, Column
+# -*- coding: utf-8 -*-
+"""
+平台内部数据表实体
+
+任务执行历史、下载记录、通用业务数据
+"""
+from sdk.entities import register_entity, Column
 
 
-class TaskHistory(BaseModel):
-    # 任务执行历史
+@register_entity("task_history")
+class TaskHistory:
+    """任务执行历史"""
     table_name = "task_history"
+    platform = ""
+    cookie_key = ""
+    description = "任务执行历史"
+
     id           = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     task_id      = Column("task_id", "VARCHAR(200)", "任务ID")
     task_name    = Column("task_name", "VARCHAR(200)", "任务名称")
@@ -18,9 +28,14 @@ class TaskHistory(BaseModel):
     created_by   = Column("created_by", "VARCHAR(100)", "触发人")
 
 
-class DownloadRecords(BaseModel):
-    # 下载文件记录
+@register_entity("download_records")
+class DownloadRecords:
+    """下载文件记录"""
     table_name = "download_records"
+    platform = ""
+    cookie_key = ""
+    description = "下载文件记录"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     task_id       = Column("task_id", "VARCHAR(200)", "任务ID")
     filename      = Column("filename", "VARCHAR(500)", "文件名")
@@ -31,9 +46,14 @@ class DownloadRecords(BaseModel):
     department    = Column("department", "VARCHAR(50)", "部门")
 
 
-class BusinessData(BaseModel):
-    # 通用业务数据表（小数据量可以直接存JSON）
+@register_entity("business_data")
+class BusinessData:
+    """通用业务数据表（小数据量可以直接存JSON）"""
     table_name = "business_data"
+    platform = ""
+    cookie_key = ""
+    description = "通用业务数据表"
+
     id            = Column("id", "BIGINT AUTO_INCREMENT PRIMARY KEY", "主键")
     task_id       = Column("task_id", "VARCHAR(200)", "任务ID")
     business_type = Column("business_type", "VARCHAR(100)", "业务类型")
