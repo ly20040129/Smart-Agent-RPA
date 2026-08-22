@@ -125,7 +125,7 @@ class TaskQueueManager:
         for job in self._jobs.values():
             if job.task_id != task_id:
                 continue
-            if (job.user_info or {}).get("username", "") or "__guest__" != username:
+            if ((job.user_info or {}).get("username", "") or "__guest__") != username:
                 continue
             if job.status not in (JobStatus.PENDING, JobStatus.RUNNING, JobStatus.SUCCESS, JobStatus.FAILED):
                 continue

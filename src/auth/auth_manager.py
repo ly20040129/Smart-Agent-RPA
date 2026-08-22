@@ -32,8 +32,18 @@ class AuthManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.users_file = self.data_dir / "users.json"
         self.departments_file = self.data_dir / "departments.json"
-        self.jwt_secret = secrets.token_hex(32)
         self.jwt_expire_hours = 24
+
+        # JWT secret: 优先从环境变量读，其次从文件读，都没有才生成并持久化
+        # 这样重启/多worker之间 secret 保持一致，用户不会被踢下线
+        self.jwt_secret = os.environ.get("JWT_SECRET", "")
+        if not self.jwt_secret:
+            secret_file = self.data_dir / ".jwt_secret"
+            if secret_file.exists():
+                self.jwt_secret = secret_file.read_text(encoding="utf-8").strip()
+            else:
+                self.jwt_secret = secrets.token_hex(32)
+                secret_file.write_text(self.jwt_secret, encoding="utf-8")
 
         self._init_default_data()
 

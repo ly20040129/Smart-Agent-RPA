@@ -46,11 +46,26 @@ async def _init_registries():
 # ==================== 中间件 ====================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"],        # 如果前端和后端同域部署，可改为具体域名
+    allow_credentials=False,    # 用 Bearer token，不需要 cookie 凭证
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==================== 健康检查 ====================
+@app.get("/health")
+async def health_check():
+    """健康检查端点，供监控系统/负载均衡器探活"""
+    checks = {
+        "redis": storage_manager.is_redis_available,
+        "mysql": storage_manager.is_mysql_available,
+    }
+    all_ok = all(checks.values())
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={"status": "ok" if all_ok else "degraded", "checks": checks},
+    )
+
 
 # ==================== 数据模型 ====================
 class TaskCreateRequest(BaseModel):
@@ -123,11 +138,16 @@ class ConnectionManager:
             self.active.remove(ws)
 
     async def broadcast(self, message: dict):
-        for ws in self.active:
+        # 复制一份避免遍历时其他协程修改列表
+        dead = []
+        for ws in list(self.active):
             try:
                 await ws.send_json(message)
-            except:
-                pass
+            except Exception:
+                # 连接已断开，标记移除；不捕获 CancelledError/SystemExit
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
 
 
 manager = ConnectionManager()

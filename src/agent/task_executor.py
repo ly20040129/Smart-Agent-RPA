@@ -235,6 +235,7 @@ class TaskExecutor:
                 )
         finally:
             # 统一兜底释放锁：获取过就释放，防止上面各种 return/异常路径漏掉
+            # 注意：finally 里只做清理，不 return——否则会吞掉 try/except 里未捕获的异常
             if storage_manager.is_redis_available and lock_acquired:
                 try:
                     storage_manager.release_lock(lock_name)
@@ -253,7 +254,7 @@ class TaskExecutor:
                 except Exception as _e:
                     logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {_e}")
 
-            return result
+        return result
 
     def _resolve_params_placeholders(self, params: Any, context: Dict) -> Any:
         """

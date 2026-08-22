@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 import pkgutil
 import importlib
+from loguru import logger
 
 # 实体类注册表
 _ENTITIES = {}
@@ -93,5 +94,5 @@ def init_entities():
         try:
             importlib.import_module(f"sdk.entities.{mod_name}")
         except Exception as e:
-            print(f"[Entities] 加载 {mod_name} 失败: {e}")
-    print(f"[Entities] 已注册 {len(_ENTITIES)} 个实体类: {list(_ENTITIES.keys())}")
+            logger.warning(f"[Entities] 加载 {mod_name} 失败: {e}")
+    logger.info(f"[Entities] 已注册 {len(_ENTITIES)} 个实体类: {list(_ENTITIES.keys())}")

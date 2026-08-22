@@ -21,6 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from sdk.cookie_manager import cookie_manager
+from loguru import logger
 
 # 平台注册表
 _PLATFORMS = {}
@@ -67,8 +68,8 @@ def init_platforms():
         try:
             importlib.import_module(f"sdk.platforms.{mod_name}")
         except Exception as e:
-            print(f"[Platforms] 加载 {mod_name} 失败: {e}")
-    print(f"[Platforms] 已注册 {len(_PLATFORMS)} 个平台: {list(_PLATFORMS.keys())}")
+            logger.warning(f"[Platforms] 加载 {mod_name} 失败: {e}")
+    logger.info(f"[Platforms] 已注册 {len(_PLATFORMS)} 个平台: {list(_PLATFORMS.keys())}")
 
 
 class CookieExpiredError(Exception):

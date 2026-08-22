@@ -27,6 +27,7 @@
 - 没配置Redis/MySQL时自动降级，不影响平台运行
 """
 from typing import Any, Optional, List, Dict
+import threading
 from loguru import logger
 
 from src.core.config import get_config
@@ -41,6 +42,9 @@ class StorageManager:
         self._redis: Optional[RedisManager] = None
         self._mysql: Optional[MySQLManager] = None
         self._initialized = False
+        # 进程内锁 fallback：Redis 不可用时用 threading.Lock 保证单进程内的互斥
+        self._local_locks: Dict[str, threading.Lock] = {}
+        self._local_locks_guard = threading.Lock()
 
     def _init(self):
         """懒加载初始化（第一次使用时调用）"""
@@ -155,13 +159,28 @@ class StorageManager:
         """获取分布式锁"""
         if self.is_redis_available:
             return self._redis.acquire_lock(lock_name, timeout)
-        return True  # 无Redis时直接放行
+        # Redis 不可用时用进程内锁兜底：同进程内仍能互斥，跨进程无法保护
+        with self._local_locks_guard:
+            lock = self._local_locks.get(lock_name)
+            if lock is None:
+                lock = threading.Lock()
+                self._local_locks[lock_name] = lock
+        return lock.acquire(timeout=timeout)
 
     def release_lock(self, lock_name: str) -> bool:
         """释放分布式锁"""
         if self.is_redis_available:
             return self._redis.release_lock(lock_name)
-        return True
+        # 释放进程内锁
+        with self._local_locks_guard:
+            lock = self._local_locks.get(lock_name)
+        if lock and lock.locked():
+            try:
+                lock.release()
+                return True
+            except RuntimeError:
+                return False
+        return False
 
     # ==================== 任务提交去重（短时 Redis）====================
 
