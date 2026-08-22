@@ -39,12 +39,15 @@ class TaskExecutor:
         self._current_user = None
         self._dingtalk: Optional[DingTalkWebhook] = None  # 延迟构建，拿到 task_config & user_config 后再建
 
-    async def execute_task(self, task_id: str, user_params: Dict = None) -> Dict[str, Any]:
+    async def execute_task(self, task_id: str, user_params: Dict = None, job_id: Optional[str] = None) -> Dict[str, Any]:
         """
         执行指定任务
 
         Args:
             task_id: 任务ID
+            user_params: 用户自定义参数
+            job_id:  队列层的 job_id，用于把 Redis 锁从 task 级降到 job 级；
+                    不同用户/不同 job 之间不再互相阻塞，仅防止“同一次 job 被多实例重复执行”
 
         Returns:
             执行结果
@@ -63,7 +66,7 @@ class TaskExecutor:
         username = self._current_user.get("username", "") if self._current_user else ""
 
         logger.info(f"{'='*60}")
-        logger.info(f"开始执行任务: {task_config.get('name', task_id)}")
+        logger.info(f"开始执行任务: {task_config.get('name', task_id)} (job={job_id or 'direct'})")
         logger.info(f"{'='*60}")
 
         start_time = time.time()
@@ -75,6 +78,11 @@ class TaskExecutor:
             context["username"] = username
             context["user_config"] = user_config
 
+        # 分布式锁粒度：job 级（没有 job_id 时退化到 task 级兜底）
+        # 这样不同用户/不同提交不会互相阻塞；同一 job 在多实例/多 worker 场景下仍只执行一次
+        lock_name = f"task:{task_id}:{job_id}" if job_id else f"task:{task_id}"
+        lock_acquired = False
+
         # 任务开始通知（钉钉）
         try:
             if self._dingtalk and self._dingtalk.enabled:
@@ -84,6 +92,11 @@ class TaskExecutor:
                 )
         except Exception as _e:
             logger.warning(f"钉钉[开始]通知发送失败，不影响执行: {_e}")
+
+        # 最终执行结果（兜底：未执行到 return 就视为失败）
+        result: Dict[str, Any] = {"status": "failed", "error": "任务未正常结束"}
+        # 任务失败时用于钉钉通知 / 落库的错误信息字符串（独立于 except 变量 e，避免 finally 里未绑定）
+        fail_reason: Optional[str] = None
 
         try:
             steps = task_config.get("steps", [])
@@ -98,18 +111,17 @@ class TaskExecutor:
                 if cookie_domain and self.smart_browser:
                     self.smart_browser.browser.set_cookie_domain(cookie_domain)
 
-            # 获取分布式锁，防止重复执行
+            # 获取分布式锁：同一次 job 仅允许被执行一次（多机/多进程部署的兜底）
             if storage_manager.is_redis_available:
-                if storage_manager.acquire_lock(f"task:{task_id}", timeout=3600):
-                    logger.info(f"已获取任务锁: {task_id}")
+                if storage_manager.acquire_lock(lock_name, timeout=3600):
+                    logger.info(f"已获取任务锁: {lock_name}")
+                    lock_acquired = True
                 else:
-                    # 锁被占用，可能是上次任务异常退出未释放。强制清理后重试一次
-                    logger.warning(f"任务锁被占用，尝试强制清理: {task_id}")
-                    storage_manager.release_lock(f"task:{task_id}")
-                    if storage_manager.acquire_lock(f"task:{task_id}", timeout=3600):
-                        logger.info(f"已获取任务锁（强制清理后）: {task_id}")
-                    else:
-                        return {"status": "failed", "error": "任务正在执行中（锁被占用且无法清理）"}
+                    # 这里不再“强制清理锁”——因为现在的粒度是 job 级，真被占用说明同 job 正在跑，直接返回即可
+                    logger.warning(f"任务锁被占用（同job正在执行）: {lock_name}")
+                    fail_reason = "相同任务正在执行中，请稍后重试"
+                    result = {"status": "failed", "error": fail_reason}
+                    return result
 
             for i, step in enumerate(steps):
                 logger.info(f"--- 步骤 {i+1}/{len(steps)}: {step.get('description', '')} ---")
@@ -127,14 +139,16 @@ class TaskExecutor:
                     )
 
                     if step_result.get("status") == "failed":
+                        fail_reason = f"步骤{i+1}失败: {step_result.get('error')}"
                         result = {
                             "status": "failed",
-                            "error": f"步骤{i+1}失败: {step_result.get('error')}",
+                            "error": fail_reason,
                             "failed_step": i + 1,
                             "recovery_attempted": step_result.get("recovery_attempted", False),
                             "recovery_diagnosis": step_result.get("recovery_diagnosis", ""),
                         }
                         self.task_manager.save_history(task_id, result)
+                        # 注意：这里的 return 会跳出整个 try，交给外层 finally 统一释放锁
                         return result
 
                 # 保存步骤结果到上下文
@@ -168,7 +182,7 @@ class TaskExecutor:
 
             self.task_manager.save_history(task_id, result)
 
-            # 保存到MySQL
+            # 保存到MySQL（锁由外层 finally 统一兜底释放）
             if storage_manager.is_redis_available:
                 storage_manager.save_task_history(
                     task_id=task_id,
@@ -179,8 +193,6 @@ class TaskExecutor:
                     steps_completed=len(steps),
                     context={k: str(v) for k, v in context.items() if not callable(v)}
                 )
-                # 释放锁
-                storage_manager.release_lock(f"task:{task_id}")
 
             # 任务成功通知（钉钉）
             try:
@@ -198,7 +210,8 @@ class TaskExecutor:
             return result
 
         except Exception as e:
-            logger.error(f"任务执行异常: {e}")
+            fail_reason = str(e)
+            logger.error(f"任务执行异常: {fail_reason}")
             if self.smart_browser:
                 await self.smart_browser.close()
             if self.smart_desktop:
@@ -208,7 +221,7 @@ class TaskExecutor:
                     pass
                 self.smart_desktop = None
 
-            result = {"status": "failed", "error": str(e)}
+            result = {"status": "failed", "error": fail_reason}
             self.task_manager.save_history(task_id, result)
 
             # 保存失败记录到MySQL
@@ -218,20 +231,27 @@ class TaskExecutor:
                     task_name=task_config.get('name', ''),
                     status='failed',
                     elapsed_time=f"{time.time() - start_time:.1f}秒",
-                    error_message=str(e)
+                    error_message=fail_reason
                 )
-                storage_manager.release_lock(f"task:{task_id}")
+        finally:
+            # 统一兜底释放锁：获取过就释放，防止上面各种 return/异常路径漏掉
+            if storage_manager.is_redis_available and lock_acquired:
+                try:
+                    storage_manager.release_lock(lock_name)
+                except Exception as _le:
+                    logger.warning(f"释放任务锁失败(不影响业务): {lock_name} err={_le}")
 
-            # 任务失败通知（钉钉）- 失败会 @all
-            try:
-                if self._dingtalk and self._dingtalk.enabled:
-                    self._dingtalk.notify_task_failed(
-                        task_name=task_config.get("name", task_id),
-                        error=str(e),
-                        username=username,
-                    )
-            except Exception as _e:
-                logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {_e}")
+            # 任务失败通知（钉钉）- 失败会 @all（这里统一用 fail_reason，不再依赖 except 里的局部变量 e）
+            if result.get("status") != "success" and (fail_reason or result.get("error")):
+                try:
+                    if self._dingtalk and self._dingtalk.enabled:
+                        self._dingtalk.notify_task_failed(
+                            task_name=task_config.get("name", task_id),
+                            error=fail_reason or str(result.get("error", "")),
+                            username=username,
+                        )
+                except Exception as _e:
+                    logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {_e}")
 
             return result
 

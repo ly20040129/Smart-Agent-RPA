@@ -163,6 +163,26 @@ class StorageManager:
             return self._redis.release_lock(lock_name)
         return True
 
+    # ==================== 任务提交去重（短时 Redis）====================
+
+    def mark_submit_dedup(self, dedup_key: str, job_id: str, ttl_seconds: int = 120) -> bool:
+        """写入提交去重键（NX+TTL）；True=成功写入，False=命中去重"""
+        if self.is_redis_available:
+            return self._redis.mark_submit_dedup(dedup_key, job_id, ttl_seconds)
+        return True  # 无 Redis 时不做去重
+
+    def get_submit_dedup_job(self, dedup_key: str) -> Optional[str]:
+        """查询命中去重对应的 job_id，无则 None"""
+        if self.is_redis_available:
+            return self._redis.get_submit_dedup_job(dedup_key)
+        return None
+
+    def clear_submit_dedup(self, dedup_key: str) -> bool:
+        """清理去重键"""
+        if self.is_redis_available:
+            return self._redis.clear_submit_dedup(dedup_key)
+        return True
+
     # ==================== 任务状态（Redis）====================
 
     def set_task_status(self, task_id: str, status: str, extra: dict = None) -> bool:

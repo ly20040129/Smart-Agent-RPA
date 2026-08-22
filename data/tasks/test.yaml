@@ -1,14 +1,15 @@
-name: 钉钉文件发送测试
-description: 钉钉文件发送测试任务（测试用，平时禁用）
-mode: browser
 department: finance
+description: 钉钉文件发送测试任务（测试用，平时禁用）
 enabled: false
-schedule: ''
+mode: browser
+name: 钉钉文件发送测试
 params_input: []
+schedule: ''
 steps:
-  - type: browser
-    action: run_workflow
-    description: 生成测试文件并发送钉钉
-    params:
-      module: workflows.dingtalk_test
-      function: test_send_file
+- action: run_workflow
+  description: 生成测试文件并发送钉钉
+  params:
+    function: test_send_file
+    module: workflows.dingtalk_test
+  type: browser
+updated_at: '2026-08-21T14:15:30.282742'

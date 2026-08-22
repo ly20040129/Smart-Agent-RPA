@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import os
+import string
 import tempfile
 from typing import Dict, Any, Optional, List
 
@@ -300,28 +301,58 @@ async def toggle_task(task_id: str, user: dict = Depends(require_auth)):
 class RunTaskRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
+    class Config:
+        # 允许前端直接传扁平字段（如 {date_from, date_to}），不必一定要包一层 params
+        extra = "allow"
+
 @app.post("/api/tasks/{task_id}/run")
 async def run_task(task_id: str, req: RunTaskRequest = None, user: dict = Depends(require_auth)):
     """手动执行任务（支持传入用户参数）- 提交到任务队列，支持并行执行"""
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "任务不存在")
-    user_params = req.params if req else None
+
+    # —— 兼容两种传参方式 ——
+    # ① 规范方式: { "params": { "date_from": "x", "date_to": "y" } }
+    # ② 扁平方式: { "date_from": "x", "date_to": "y" } (前端表单直接序列化提交)
+    extra: Dict[str, Any] = {}
+    if req is not None:
+        # BaseModel 未声明的额外字段落在 __dict__ 里；若启用 extra=allow 也在 __pydantic_extra__ / dict(exclude_unset=False)
+        try:
+            full = req.dict(exclude_none=False)
+        except Exception:
+            full = {k: v for k, v in vars(req).items() if not k.startswith("_")}
+        declared_params = full.pop("params", None)
+        extra = {k: v for k, v in full.items() if v is not None and not k.startswith("_")}
+        if declared_params and isinstance(declared_params, dict):
+            # 规范字段优先级最高；扁平字段作为兜底合并
+            merged = dict(extra)
+            merged.update(declared_params)
+            user_params = merged
+        else:
+            user_params = extra or None
+    else:
+        user_params = None
     task_name = task.get("name", task_id)
 
     # 构造 run_fn：封装原先 _run_task_background 的逻辑，供队列执行
-    async def run_fn():
+    # 注意：TaskQueueManager._run_job() 会给带 job_id 参数的 run_fn 注入当前 job_id，
+    # 从而把 TaskExecutor 的 Redis 分布式锁粒度从“整个任务”降到“单次提交的 job”，
+    # 避免不同用户/不同提交互相阻塞。
+    async def run_fn(job_id: Optional[str] = None):
         # 这里用局部变量捕获外面的 task_id, user_params, user
         await manager.broadcast({
             "type": "status",
             "message": f"任务 [{task_name}] 开始执行...",
             "task_id": task_id,
+            "job_id": job_id,
         })
         executor = TaskExecutor()
         if user:
             executor.set_user(user)
-        result = await executor.execute_task(task_id, user_params=user_params)
-        if result.get("status") == "success":
+        result = await executor.execute_task(task_id, user_params=user_params, job_id=job_id)
+        is_success = bool(result and result.get("status") == "success")
+        if is_success:
             await manager.broadcast({
                 "type": "success",
                 "message": f"任务 [{task_name}] 执行成功，耗时 {result.get('elapsed_time')}秒",
@@ -329,13 +360,16 @@ async def run_task(task_id: str, req: RunTaskRequest = None, user: dict = Depend
                 "result": {k: v for k, v in result.items() if k != "context"},
             })
         else:
+            err_msg = result.get("error") if isinstance(result, dict) else str(result)
             await manager.broadcast({
                 "type": "error",
-                "message": f"任务 [{task_name}] 执行失败: {result.get('error')}",
+                "message": f"任务 [{task_name}] 执行失败: {err_msg}",
                 "task_id": task_id,
-                "error": result.get("error"),
+                "error": err_msg,
             })
-        return result
+            # 这里抛出异常：让 TaskQueueManager._run_job() 把 job 状态正确标为 FAILED，
+            # 而不是“函数返回了 dict = 成功”。用户端看到的队列面板状态会与实际执行结果一致。
+            raise RuntimeError(err_msg or "任务失败")
 
     # 状态变化时通过 WebSocket 推送队列状态
     def on_status_change(job):
@@ -564,7 +598,26 @@ async def browse_files(
 ):
     """浏览本地文件系统，返回指定目录下的文件和文件夹列表"""
     if not path:
-        path = os.path.expanduser("~")
+        if os.name == 'nt':  # Windows
+            drives = []
+            for drive in string.ascii_uppercase:
+                drive_path = f"{drive}:\\"
+                if os.path.exists(drive_path):
+                    drives.append({
+                        "name": f"{drive}:\\",
+                        "path": drive_path,
+                        "is_dir": True,
+                        "size": 0,
+                        "modified": None
+                    })
+            return {
+                "current": "",
+                "parent": "",
+                "items": drives,
+                "is_drive_list": True
+            }
+        else:  # Linux/Mac
+            path = "/"
 
     path = os.path.abspath(path)
     if not os.path.isdir(path):
@@ -580,14 +633,21 @@ async def browse_files(
                 "path": full_path,
                 "is_dir": is_dir,
                 "size": os.path.getsize(full_path) if not is_dir else 0,
-                "modified": datetime.fromtimestamp(os.path.getmtime(full_path)).isoformat()
+                "modified": datetime.fromtimestamp(os.path.getmtime(full_path)).isoformat() if not is_dir else None
             })
     except PermissionError:
         raise HTTPException(403, "无权限访问该目录")
+    except Exception as e:
+        raise HTTPException(500, f"读取目录失败：{str(e)}")
 
     items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
 
-    parent = os.path.dirname(path) if path != os.path.dirname(path) else path
+    parent = os.path.dirname(path)
+    # 如果当前是盘符根目录（如 C:\），parent 设为空字符串
+    if path.endswith(":\\") or path == os.path.dirname(path):
+        parent = ""
+
+    # parent = os.path.dirname(path) if path != os.path.dirname(path) else path
     return {
         "current": path,
         "parent": parent,
@@ -897,15 +957,19 @@ async def smart_chat(req: ChatRequest, user: dict = Depends(require_auth)):
             if task and (user.get("role") == "admin" or task.get("department") == user_dept):
                 task_name = task.get("name", task_to_run)
 
-                async def run_fn():
-                    await manager.broadcast({"type": "status", "message": f"任务 [{task_name}] 开始执行...", "task_id": task_to_run})
+                # 与 /api/tasks/{task_id}/run 保持一致：失败时 throw，保证 job 状态正确
+                async def run_fn(job_id: Optional[str] = None):
+                    await manager.broadcast({"type": "status", "message": f"任务 [{task_name}] 开始执行...", "task_id": task_to_run, "job_id": job_id})
                     executor = TaskExecutor()
                     executor.set_user(user)
-                    result = await executor.execute_task(task_to_run, user_params=None)
-                    if result.get("status") == "success":
+                    result = await executor.execute_task(task_to_run, user_params=None, job_id=job_id)
+                    is_ok = bool(result and result.get("status") == "success")
+                    if is_ok:
                         await manager.broadcast({"type": "success", "message": f"任务 [{task_name}] 成功，耗时 {result.get('elapsed_time')}秒", "task_id": task_to_run})
                     else:
-                        await manager.broadcast({"type": "error", "message": f"任务 [{task_name}] 失败: {result.get('error')}", "task_id": task_to_run})
+                        err = result.get("error") if isinstance(result, dict) else str(result)
+                        await manager.broadcast({"type": "error", "message": f"任务 [{task_name}] 失败: {err}", "task_id": task_to_run})
+                        raise RuntimeError(err or "任务失败")
                     return result
 
                 def on_status_change(job):

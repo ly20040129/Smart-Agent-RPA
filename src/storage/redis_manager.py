@@ -303,6 +303,53 @@ class RedisManager:
         except Exception:
             return False
 
+    # ==================== 任务提交去重（短时） ====================
+
+    def mark_submit_dedup(self, dedup_key: str, job_id: str, ttl_seconds: int = 120) -> bool:
+        """
+        写入提交去重键。若键已存在则返回 False，表示短时间已有人提交过相同请求。
+
+        键由调用方构造，推荐：dedup:{task_id}:{username}:{params_hash}
+        值保存 job_id，便于命中去重时直接复用同一个 job。
+        """
+        client = self.client
+        if client is None:
+            return True
+        try:
+            key = self._key(f"dedup:{dedup_key}")
+            ok = client.set(key, job_id, nx=True, ex=ttl_seconds)
+            if ok:
+                logger.debug(f"[Dedup] SET OK key={dedup_key} job={job_id} ttl={ttl_seconds}s")
+            else:
+                exist_job = client.get(key) or ""
+                logger.debug(f"[Dedup] HIT key={dedup_key} exist_job={exist_job}")
+            return bool(ok)
+        except Exception as e:
+            logger.warning(f"[Dedup] mark_submit_dedup 异常: {e}")
+            return True  # 异常时放行，不阻塞业务
+
+    def get_submit_dedup_job(self, dedup_key: str) -> Optional[str]:
+        """查询命中去重时对应的 job_id。未命中返回 None。"""
+        client = self.client
+        if client is None:
+            return None
+        try:
+            data = client.get(self._key(f"dedup:{dedup_key}"))
+            return data if isinstance(data, str) and data else None
+        except Exception:
+            return None
+
+    def clear_submit_dedup(self, dedup_key: str) -> bool:
+        """主动清除去重键（例如当任务最终失败且用户需要立即重试时）"""
+        client = self.client
+        if client is None:
+            return True
+        try:
+            client.delete(self._key(f"dedup:{dedup_key}"))
+            return True
+        except Exception:
+            return False
+
     # ==================== 任务状态 ====================
 
     def set_task_status(self, task_id: str, status: str, extra: dict = None) -> bool:

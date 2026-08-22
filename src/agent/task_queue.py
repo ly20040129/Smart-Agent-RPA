@@ -27,6 +27,8 @@
     queue_snapshot = task_queue_manager.snapshot()
 """
 import asyncio
+import hashlib
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -34,6 +36,11 @@ from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from loguru import logger
+
+try:
+    from src.storage import storage_manager
+except Exception:  # 测试或无storage依赖场景兜底
+    storage_manager = None
 
 
 class JobStatus(str, Enum):
@@ -101,6 +108,39 @@ class TaskQueueManager:
         self._history_limit = 200  # 最多保留历史记录数
         self._lock = asyncio.Lock()  # 保护内部字典
 
+    def _build_dedup_key(self, task_id: str, user_info: Optional[dict], user_params: Optional[dict]) -> str:
+        """构造提交去重键：同一用户 + 同一任务 + 相同参数 = 同一个键"""
+        username = (user_info or {}).get("username", "") or "__guest__"
+        try:
+            params_str = json.dumps(user_params or {}, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            params_str = str(user_params)
+        params_hash = hashlib.md5(params_str.encode("utf-8")).hexdigest()[:10]
+        return f"{task_id}:{username}:{params_hash}"
+
+    def _find_same_job_locked(self, dedup_key: str, task_id: str, user_info: Optional[dict], user_params: Optional[dict]) -> Optional[Job]:
+        """内存兜底：在当前进程的 job 里找 60 秒内同用户/同参数/同任务的运行/等待中 job，命中则直接复用"""
+        now = time.time()
+        username = (user_info or {}).get("username", "") or "__guest__"
+        for job in self._jobs.values():
+            if job.task_id != task_id:
+                continue
+            if (job.user_info or {}).get("username", "") or "__guest__" != username:
+                continue
+            if job.status not in (JobStatus.PENDING, JobStatus.RUNNING, JobStatus.SUCCESS, JobStatus.FAILED):
+                continue
+            # 命中去重只看最近 120s 内的（与 Redis TTL 对齐）
+            if now - job.created_at > 120:
+                continue
+            try:
+                a = json.dumps(job.user_params or {}, ensure_ascii=False, sort_keys=True)
+                b = json.dumps(user_params or {}, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                a, b = str(job.user_params), str(user_params)
+            if a == b:
+                return job
+        return None
+
     async def submit(
         self,
         *,
@@ -112,15 +152,45 @@ class TaskQueueManager:
         on_status_change: Optional[Callable[[Job], None]] = None,
     ) -> str:
         """
-        提交一个任务到队列，立即返回 job_id。任务会在后台按顺序执行。
+        提交一个任务到队列，立即返回 job_id。
 
-        Args:
-            run_fn: 无参 async 函数，内部会自己实例化 TaskExecutor 等。
-                    返回值会存到 job.result。
-
-        Returns:
-            job_id
+        去重规则（短时间内同用户同参数）：
+        - 若 Redis 命中去重键且对应 job 仍存在：直接复用已有 job_id，不新建，不报错
+        - 若未命中：创建新 job，后台执行
         """
+        dedup_key = self._build_dedup_key(task_id, user_info, user_params)
+
+        # --- 第 1 步：内存内快速兜底命中（Redis 未开时也能去重） ---
+        async with self._lock:
+            existed = self._find_same_job_locked(dedup_key, task_id, user_info, user_params)
+            if existed is not None:
+                logger.info(
+                    f"[TaskQueue] 命中内存去重，复用 job={existed.job_id} "
+                    f"task={task_id} user={(user_info or {}).get('username', '')}"
+                )
+                self._notify(existed)
+                return existed.job_id
+
+        # --- 第 2 步：Redis 级去重（跨进程/单机重启后仍能命中短时间重复） ---
+        reused_job_id: Optional[str] = None
+        if storage_manager is not None and storage_manager.is_redis_available:
+            existed_job_id = storage_manager.get_submit_dedup_job(dedup_key)
+            if existed_job_id:
+                async with self._lock:
+                    job = self._jobs.get(existed_job_id)
+                # 内存里还有就直接复用
+                if job is not None:
+                    reused_job_id = job.job_id
+                else:
+                    # 内存里没有（例如进程刚重启），仍视为同一次提交，返回 Redis 里保存的 job_id
+                    reused_job_id = existed_job_id
+                logger.info(
+                    f"[TaskQueue] 命中Redis去重，复用 job={reused_job_id} "
+                    f"task={task_id} user={(user_info or {}).get('username', '')}"
+                )
+                return reused_job_id
+
+        # --- 第 3 步：新建 job ---
         job_id = uuid.uuid4().hex[:12]
         job = Job(
             job_id=job_id,
@@ -139,6 +209,13 @@ class TaskQueueManager:
                 self._task_locks[task_id] = asyncio.Lock()
             task_lock = self._task_locks[task_id]
             self._prune_history_locked()
+
+        # Redis 去重键 TTL 2 分钟：在此期间重复点击会直接复用同一个 job_id
+        if storage_manager is not None:
+            try:
+                storage_manager.mark_submit_dedup(dedup_key, job_id, ttl_seconds=120)
+            except Exception as _e:
+                logger.warning(f"[TaskQueue] mark_submit_dedup 失败: {_e}")
 
         logger.info(f"[TaskQueue] 提交任务 job={job_id} task={task_id} name={task_name}")
         self._notify(job)
@@ -167,7 +244,13 @@ class TaskQueueManager:
                     try:
                         if job._run_fn is None:
                             raise RuntimeError("job.run_fn 为空")
-                        result = await job._run_fn()
+                        # 把 job_id 作为上下文传给 run_fn（通过函数元信息注入或直接做关键字兜底）
+                        import inspect
+                        sig = inspect.signature(job._run_fn)
+                        if "job_id" in sig.parameters:
+                            result = await job._run_fn(job_id=job.job_id)
+                        else:
+                            result = await job._run_fn()
                         job.result = result
                         job.status = JobStatus.SUCCESS
                         logger.info(f"[TaskQueue] ✅ job={job.job_id} 成功")
