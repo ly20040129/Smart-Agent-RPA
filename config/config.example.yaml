@@ -1,4 +1,6 @@
 # ==================== 智能体平台主配置文件 ====================
+# 使用说明：复制本文件为 config.yaml，并填入你自己的密钥和配置
+# 命令：cp config/config.example.yaml config/config.yaml
 
 # ==================== LLM配置 ====================
 llm:
@@ -7,14 +9,14 @@ llm:
 
   # ---- 智谱AI配置（GLM-4-Flash 免费模型）----
   zhipuai:
-    api_key: "fd68c7a484e8477f8d001c8d0e9a7297.0RNMgaitnZ4vmXjq"     # API key
+    api_key: "your_zhipuai_api_key"        # API key
     model: "glm-4-flash"                   # 免费模型，速度快
     temperature: 0.1
     timeout: 60
 
   # ---- DeepSeek配置（ModelScope，OpenAI兼容接口）----
   deepseek:
-    api_key: "ms-826a12e8-7c25-4878-bdda-5b8d7fcae594"
+    api_key: "your_deepseek_api_key"
     base_url: "https://api-inference.modelscope.cn/v1"
     model: "Qwen/Qwen3-235B-A22B"
     temperature: 0.1
@@ -103,7 +105,7 @@ storage:
     host: "localhost"
     port: 3306
     user: "root"
-    password: "1234"                       # 本地MySQL密码
+    password: "your_mysql_password"        # 本地MySQL密码
     database: "smart_agent"                # 数据库名（自动创建）
     charset: "utf8mb4"
 
@@ -121,8 +123,8 @@ storage:
 # ==================== 钉钉webhook配置 ====================
 notifications:
   dingtalk:
-    webhook: "https://oapi.dingtalk.com/robot/send?access_token=c8c7b92e75bb2633b2a12c76a8531a435f7bc0097e08f6dea016cb63bec057fa"
-    secret: "SECba59b4522ab3fc7975a0fd6ea84b90e786e32557dc8ab9b66a34512934e69737"
+    webhook: "https://oapi.dingtalk.com/robot/send?access_token=your_dingtalk_webhook_token"
+    secret: "your_dingtalk_secret"
 
 # ==================== 交付配置 ====================
 delivery:
@@ -132,8 +134,8 @@ delivery:
   
   dingtalk:
     # 自建应用机器人（发文件）
-    app_key: "dinguyhemp2qmxc5qlxe"           # 自建应用的 AppKey
-    app_secret: "LNK33EYaMDv-GUYA2xK-gl8CxM0zhN3vPlxt4WGmPZMOH_oWElC5_54BIq06jAC0"       # 自建应用的 AppSecret
+    app_key: "your_dingtalk_app_key"           # 自建应用的 AppKey
+    app_secret: "your_dingtalk_app_secret"     # 自建应用的 AppSecret
     agent_id: 4806132268
     # 或者直接用 Webhook + 加签（如果是企业内机器人）
     # webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
