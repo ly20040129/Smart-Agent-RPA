@@ -82,5 +82,12 @@
     "status": "success",
     "error": null,
     "elapsed_time": 3.57
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-21T14:15:10.565925",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 12.11
   }
 ]

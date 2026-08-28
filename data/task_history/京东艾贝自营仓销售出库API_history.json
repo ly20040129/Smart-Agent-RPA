@@ -82,5 +82,75 @@
     "status": "failed",
     "error": "步骤1失败: Workflow调用失败: 京东API返回登录过期，cookie已自动清除。\n请去Web界面 → Cookie管理 → 点击「刷新」按钮重新登录京东。（诊断: 登录已过期或Cookie失效）",
     "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-21T14:20:53.454070",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: API返回失败: {\"code\": 401, \"message\": \"登录失效,未获取到用户登录信息\", \"success\": false}（诊断: 登录已过期或Cookie失效）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-21T14:22:46.770788",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: [jd] 刷新后仍然失效，请检查: jd_shop_ibay（已重试3次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-21T14:23:21.043656",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: [jd] 刷新后仍然失效，请检查: jd_shop_ibay（诊断: 错误提示显示京东API模块[jd_shop_ibay]调用失败，可能原因包括：1.模块权限配置错误导致无法访问；2.模块参数(function/module)传递异常；3.API接口限流或服务异常）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-21T15:01:07.318270",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 30.17
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T09:46:56.390494",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: 请提供 date_from 和 date_to 参数（诊断: 调用京东API时缺少必填参数date_from和date_to，导致工作流无法执行。参数缺失属于数据处理错误，需检查参数配置或上下文数据。）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T09:48:53.420891",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: 请提供 date_from 和 date_to 参数（已重试3次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T09:56:46.075200",
+    "status": "failed",
+    "error": "步骤1失败: Workflow调用失败: 请提供 date_from 和 date_to 参数（已重试3次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T10:29:52.420668",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.53
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T11:32:38.875091",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.83
+  },
+  {
+    "task_id": "京东艾贝自营仓销售出库API",
+    "timestamp": "2026-08-22T18:03:08.052560",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.67
   }
 ]
