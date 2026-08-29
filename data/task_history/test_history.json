@@ -89,5 +89,40 @@
     "status": "success",
     "error": null,
     "elapsed_time": 12.11
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-29T16:53:39.818736",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 7.18
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-29T17:02:27.946903",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.99
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-29T17:10:00.985356",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 3.16
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-29T17:56:35.876593",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.65
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-29T18:34:45.856625",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.94
   }
 ]

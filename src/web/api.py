@@ -205,18 +205,39 @@ async def list_users(user: dict = Depends(require_admin)):
 
 @app.post("/api/users")
 async def create_user(req: CreateUserRequest, user: dict = Depends(require_admin)):
-    """创建用户"""
-    success = auth_manager.create_user(req.username, req.password, req.department, req.role)
+    """创建用户（后端二次校验：提权拦截、部门隔离、必填）"""
+    from loguru import logger as _api_logger
+    success = auth_manager.create_user(
+        req.username, req.password, req.department, req.role,
+        creator_role=user.get("role"),
+        creator_department=user.get("department"),
+    )
     if not success:
-        raise HTTPException(400, "用户已存在")
+        # 失败原因在 auth_manager 里已经打了 warning，这里统一给前端一个可读错误
+        _api_logger.warning(
+            f"创建用户失败: caller={user.get('username')} target={req.username} "
+            f"role={req.role} dept={req.department}"
+        )
+        raise HTTPException(400, "创建失败：用户名已存在 / 跨部门 / 参数非法（密码<4位）")
     return {"status": "success"}
+
+@app.put("/api/users/{username}/reset-password")
+async def reset_user_password(username: str, user: dict = Depends(require_admin)):
+    """管理员重置用户密码：默认规则 用户名+123，返回设置的新密码明文"""
+    from loguru import logger as _api_logger
+    new_pw = auth_manager.reset_password(username)
+    if new_pw is None:
+        _api_logger.warning(f"重置密码失败：用户不存在 username={username}, by={user.get('username')}")
+        raise HTTPException(400, "用户不存在")
+    _api_logger.info(f"密码已重置：user={username}, by={user.get('username')}")
+    return {"status": "success", "new_password": new_pw}
 
 @app.delete("/api/users/{username}")
 async def delete_user(username: str, user: dict = Depends(require_admin)):
-    """删除用户"""
-    success = auth_manager.delete_user(username)
+    """删除用户（admin账号不可删；非admin删除者想删admin=拒）"""
+    success = auth_manager.delete_user(username, deleter_role=user.get("role"))
     if not success:
-        raise HTTPException(400, "无法删除")
+        raise HTTPException(400, "无法删除（admin账号不可删 / 目标不存在 / 越权）")
     return {"status": "success"}
 
 

@@ -561,7 +561,19 @@ async function saveTask() {
 
 /* ---------- 用户管理 ---------- */
 async function openUserModal() {
+    // 非 admin：按钮应该在 init 时就隐藏了，这里再兜底一层直接拒
+    if (currentUser && currentUser.role !== 'admin') {
+        alert('⚠️ 仅管理员可以进入用户管理');
+        return;
+    }
+
     var res = await fetch(API + '/api/users', {headers: authHeaders()});
+    if (!res.ok) {
+        var txt = await res.text().catch(()=>'');
+        alert('获取用户列表失败 (' + res.status + '): ' + (txt || '权限不足'));
+        closeUserModal();
+        return;
+    }
     var data = await res.json();
     var users = data.users || [];
     var list = document.getElementById('user-list');
@@ -569,17 +581,13 @@ async function openUserModal() {
     for (var i = 0; i < users.length; i++) {
         var u = users[i];
         html += '<tr style="border-bottom:1px solid #eee;"><td style="padding:8px;">' + u.username + '</td><td style="padding:8px;">' + u.department + '</td><td style="padding:8px;">' + u.role + '</td><td style="padding:8px;">';
-        if (u.username === 'admin') html += '(不可删除)';
-        else html += '<button class="btn btn-sm btn-danger" data-user="' + u.username + '">删除</button>';
+        html += '<button class="btn btn-sm" style="background:#2980b9;color:#fff;margin-right:4px;" onclick="resetUserPwd(\'' + u.username + '\')">🔑 重置密码</button>';
+        if (u.username === 'admin') html += '<span style="color:#888;">(不可删除)</span>';
+        else html += '<button class="btn btn-sm btn-danger" onclick="deleteUser(\'' + u.username + '\')">删除</button>';
         html += '</td></tr>';
     }
     html += '</tbody></table>';
     list.innerHTML = html;
-
-    var delBtns = list.querySelectorAll('button[data-user]');
-    for (var j = 0; j < delBtns.length; j++) {
-        delBtns[j].onclick = function() { deleteUser(this.getAttribute('data-user')); };
-    }
     document.getElementById('user-modal').style.display = 'block';
     document.getElementById('user-modal-overlay').style.display = 'block';
 }
@@ -591,14 +599,30 @@ async function createUser() {
     var dept = document.getElementById('new-dept').value;
     var role = document.getElementById('new-role').value;
     if (!username || !password) { alert('请填写用户名和密码'); return; }
-    await fetch(API + '/api/users', {method:'POST',headers:authHeaders(),body:JSON.stringify({username:username,password:password,department:dept,role:role})});
+    if (password.length < 4) { alert('密码至少4位'); return; }
+    var res = await fetch(API + '/api/users', {method:'POST',headers:authHeaders(),body:JSON.stringify({username:username,password:password,department:dept,role:role})});
+    if (!res.ok) {
+        var msg = (await res.text().catch(()=>'')) || '创建失败';
+        alert('❌ 创建用户失败：' + msg);
+        return;
+    }
     document.getElementById('new-username').value = '';
     document.getElementById('new-password').value = '';
     openUserModal();
 }
+
+async function resetUserPwd(username) {
+    if (!confirm('确定重置用户 ' + username + ' 的密码？\n新密码规则：用户名 + "123"')) return;
+    var res = await fetch(API + '/api/users/' + encodeURIComponent(username) + '/reset-password', {method:'PUT',headers:authHeaders()});
+    if (!res.ok) { var m = await res.text().catch(()=>''); alert('重置失败: '+m); return; }
+    var d = await res.json();
+    alert('✅ 密码已重置！\n\n新密码: ' + (d.new_password || (username+'123')) + '\n请立即登录后修改。');
+}
+
 async function deleteUser(username) {
     if (!confirm('确定删除用户 ' + username + '?')) return;
-    await fetch(API + '/api/users/' + username, {method:'DELETE',headers:authHeaders()});
+    var res = await fetch(API + '/api/users/' + encodeURIComponent(username), {method:'DELETE',headers:authHeaders()});
+    if (!res.ok) { var m = await res.text().catch(()=>''); alert('删除失败: '+m); return; }
     openUserModal();
 }
 

@@ -79,13 +79,14 @@ class RedisManager:
 
     # ==================== Cookie管理 ====================
 
-    def save_cookies(self, domain: str, cookies: List[Dict]) -> bool:
+    def save_cookies(self, domain: str, cookies: List[Dict], expire_days: int = 30) -> bool:
         """
         保存浏览器cookie到Redis
 
         Args:
             domain: 网站标识，如 'jd_shop', 'wechat_pay'
             cookies: Playwright的cookie列表
+            expire_days: 过期天数，默认30天
 
         Returns:
             是否保存成功
@@ -98,12 +99,24 @@ class RedisManager:
             data = json.dumps(cookies, ensure_ascii=False)
             key = self._key(f"cookies:{domain}")
             client.set(key, data)
-            # 设置过期时间30天
-            client.expire(key, 30 * 24 * 3600)
-            logger.info(f"Cookie已保存到Redis: {domain} ({len(cookies)}条, 30天有效)")
+            client.expire(key, expire_days * 24 * 3600)
+            logger.info(f"Cookie已保存到Redis: {domain} ({len(cookies)}条, {expire_days}天有效)")
             return True
         except Exception as e:
             logger.error(f"保存Cookie失败: {e}")
+            return False
+
+    def extend_cookie_ttl(self, domain: str, expire_days: int = 30) -> bool:
+        """仅刷新cookie的TTL（不重写内容），成功调用API后用"""
+        client = self.client
+        if client is None:
+            return False
+        try:
+            key = self._key(f"cookies:{domain}")
+            client.expire(key, expire_days * 24 * 3600)
+            return True
+        except Exception as e:
+            logger.error(f"刷新Cookie TTL失败: {e}")
             return False
 
     def load_cookies(self, domain: str) -> Optional[List[Dict]]:
@@ -126,8 +139,10 @@ class RedisManager:
             if data:
                 cookies = json.loads(data)
                 logger.info(f"从Redis读取Cookie: {domain} ({len(cookies)}条)")
-                # 每次读取时自动续期30天
-                client.expire(key, 30 * 24 * 3600)
+                # 注意：读取时不再自动续期。续期只放在两处确认真实有效的路径：
+                #   1) probe_cookie() 探活成功（非缓存命中）后
+                #   2) web_api() 调用成功、通过 _is_expired() 检测后
+                # 防止读一下就续期导致失效cookie被反复续命30天
                 return cookies
             logger.debug(f"Redis中无Cookie: {domain}")
             return None

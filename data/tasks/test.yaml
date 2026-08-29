@@ -1,6 +1,6 @@
 department: finance
 description: 钉钉文件发送测试任务（测试用，平时禁用）
-enabled: false
+enabled: true
 mode: browser
 name: 钉钉文件发送测试
 params_input: []
@@ -12,4 +12,4 @@ steps:
     function: test_send_file
     module: workflows.dingtalk_test
   type: browser
-updated_at: '2026-08-21T14:15:30.282742'
+updated_at: '2026-08-29T16:51:27.221229'

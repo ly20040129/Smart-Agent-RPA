@@ -153,6 +153,12 @@ async function init() {
     document.getElementById('current-user').textContent = currentUser.username;
     var deptName = await getDeptName(currentUser.department);
     document.getElementById('current-dept').textContent = deptName;
+    // 非 admin：隐藏「用户管理」按钮，避免点进去才被 403 弹回来（还以为成功了没）
+    var adminBtn = document.getElementById('btn-user-mgr');
+    if (adminBtn) {
+        if (currentUser.role !== 'admin') adminBtn.style.display = 'none';
+        else adminBtn.style.display = '';
+    }
     await loadDepts();
     await loadTasks();
     connectWS();

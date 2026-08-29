@@ -58,6 +58,8 @@ class Browser:
         self._headless = headless
         self._cookies_restored = False
         self._current_frame = None
+        # wait_login_auto 检测到登录完成并 save 后设为 True，close() 时不再二次 capture
+        self._login_already_saved = False
 
     def _ctx(self):
         """获取当前操作上下文：如果在iframe中则返回frame_locator，否则返回page"""
@@ -87,12 +89,13 @@ class Browser:
 
     async def close(self):
         if self._sb:
-            # 只在已登录时才抓取，避免把好cookie覆盖成坏的
-            if self.cookie_key:
+            # 只在：设置了cookie_key 且 wait_login_auto 没已经存过 时，才 capture
+            # 避免 close() 再把 cookie 写一遍（重复日志 + 多一次 Redis 写）
+            if self.cookie_key and not self._login_already_saved:
                 try:
                     ctx = getattr(self._sb.browser, "context", None)
                     if ctx:
-                        cookie_manager.capture_from_context(ctx, self.cookie_key)
+                        await cookie_manager.capture_from_context(ctx, self.cookie_key)
                 except Exception:
                     pass
             try:
@@ -173,17 +176,21 @@ class Browser:
 
     async def wait_login_auto(self, timeout=300, interval=3, on_success=None, on_timeout=None, on_progress=None):
         """
-        自动轮询检测登录成功（不阻塞事件循环，不需要用户在终端操作）
+        自动轮询检测登录完成（三层判定：cookie硬门槛 + 页面信号 + 真试验证钩子）
 
-        每 interval 秒检查一次浏览器cookie，当核心cookie出现（表示已登录）时自动保存。
-        适用于Web界面触发的Cookie刷新场景。
+        每 interval 秒检查一次：
+          1. 抓浏览器 cookies
+          2. 读当前 page 的 URL / title / 正文前 2000 字
+          3. 交给 cookie_manager.check_login_complete 做三层判定
+        判定通过才保存 cookies，避免把 placeholder / 登录页 cookie 存进 Redis。
 
         Args:
             timeout: 最大等待秒数（默认5分钟）
             interval: 轮询间隔秒数（默认3秒）
             on_success: 登录成功时的回调（同步或异步函数）
             on_timeout: 超时时的回调
-            on_progress: 每次轮询时的回调，参数为 {total, found, missing, elapsed, status}
+            on_progress: 每次轮询时的回调，参数包含
+                {total, found, missing, elapsed, status, reason, cookie_ok, page_ok}
 
         Returns:
             True=登录成功，False=超时
@@ -217,41 +224,89 @@ class Browser:
 
                 cookies = await ctx.cookies()
                 cookie_names = {c.get("name", "") for c in cookies}
-                # 找到哪些核心cookie（必须有值）
                 found = [c for c in core_cookies if c in cookie_names and any(x.get("name") == c and x.get("value") for x in cookies)]
                 missing = [c for c in core_cookies if c not in found]
 
-                # 至少找到2个核心cookie才算登录成功（避免单个cookie误判）
-                threshold = min(2, len(core_cookies))
-                if len(found) >= threshold:
-                    # 登录成功！保存cookie
+                # ---- 拿到页面信息：URL / title / 正文前2000字 ----
+                page = getattr(self._sb.browser, "page", None)
+                url = ""
+                title = ""
+                body_text = ""
+                if page is not None:
+                    try:
+                        url = page.url or ""
+                    except Exception:
+                        url = ""
+                    try:
+                        title = await page.title() or ""
+                    except Exception:
+                        title = ""
+                    try:
+                        # 取正文前 2000 字符做关键词匹配，太长了拖慢轮询
+                        raw = await page.inner_text("body")
+                        body_text = (raw or "")[:2000]
+                    except Exception:
+                        body_text = ""
+
+                # ---- 三层登录判定 ----
+                result = cookie_manager.check_login_complete(
+                    cookies, self.cookie_key,
+                    url=url, title=title, body_text=body_text,
+                )
+                ok = result["ok"]
+                reason = result["reason"]
+                cookie_ok = result["cookie_ok"]
+                page_ok = result["page_ok"]
+
+                if ok:
+                    # ✅ 三层都通过：保存 + 设flag防close二次保存 + 通知回调
                     cookie_manager.save(self.cookie_key, cookies)
+                    self._login_already_saved = True
                     print(f"[Browser] ✅ 登录成功（轮询#{poll_count}，耗时{elapsed}秒）")
+                    print(f"[Browser]   {reason}")
                     print(f"[Browser]   核心cookie已找到: {found}")
                     print(f"[Browser]   共保存{len(cookies)}条cookie")
                     if on_progress:
-                        result = on_progress({"total": len(cookies), "found": found, "missing": missing, "elapsed": elapsed, "status": "success"})
-                        if asyncio.iscoroutine(result):
-                            await result
+                        payload = {
+                            "total": len(cookies), "found": found, "missing": missing,
+                            "elapsed": elapsed, "status": "success", "reason": reason,
+                            "cookie_ok": cookie_ok, "page_ok": page_ok,
+                        }
+                        r = on_progress(payload)
+                        if asyncio.iscoroutine(r):
+                            await r
                     if on_success:
-                        result = on_success()
-                        if asyncio.iscoroutine(result):
-                            await result
+                        r = on_success()
+                        if asyncio.iscoroutine(r):
+                            await r
                     return True
                 else:
-                    # 还没登录，打印进度
-                    print(f"[Browser] 轮询#{poll_count} ({elapsed}s): 共{len(cookies)}条cookie，核心cookie找到{len(found)}/{len(core_cookies)}（需≥{threshold}），缺少: {missing}")
+                    # 还没过，打印详细 reason 方便用户看卡在哪一层
+                    threshold = min(2, len(core_cookies))
+                    print(
+                        f"[Browser] 轮询#{poll_count} ({elapsed}s): "
+                        f"核心cookie {len(found)}/{len(core_cookies)}≥{threshold} | "
+                        f"原因：{reason} | URL: {url[:80]}"
+                    )
                     if on_progress:
-                        result = on_progress({"total": len(cookies), "found": found, "missing": missing, "elapsed": elapsed, "status": "waiting", "threshold": threshold})
-                        if asyncio.iscoroutine(result):
-                            await result
+                        payload = {
+                            "total": len(cookies), "found": found, "missing": missing,
+                            "elapsed": elapsed, "status": "waiting",
+                            "threshold": threshold, "reason": reason,
+                            "cookie_ok": cookie_ok, "page_ok": page_ok,
+                        }
+                        r = on_progress(payload)
+                        if asyncio.iscoroutine(r):
+                            await r
 
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 print(f"[Browser] 轮询#{poll_count} 异常: {e}")
                 if on_progress:
-                    result = on_progress({"total": 0, "found": [], "missing": core_cookies, "elapsed": elapsed, "status": "error", "error": str(e)})
+                    result = on_progress({"total": 0, "found": [], "missing": core_cookies,
+                                          "elapsed": elapsed, "status": "error",
+                                          "error": str(e), "reason": f"异常: {e}"})
                     if asyncio.iscoroutine(result):
                         await result
 

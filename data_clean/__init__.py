@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 数据清洗模块
 
@@ -13,6 +13,6 @@
   - type: data
     action: process_data
     params:
-      module: data_processors.jd_ibay_sales
+      module: data_clean.jd_ibay_sales
       function: process
 """

@@ -50,33 +50,30 @@ smart_agent_platform/
 │   ├── jd_ibay_self.py     京东艾贝自营仓（浏览器自动化）
 │   └── jd_ibay_self_api.py 京东艾贝自营仓（API自动化）
 │
-├── data_processors/        ── 数据清洗脚本 ──
+├── data_clean/             ── 数据清洗脚本 ──
 │   ├── wechat_bill.py      公众号账单清洗
 │   └── jd_ibay_sales.py    京东销售数据清洗
 │
 ├── sdk/                    ── 封装好的工具SDK ──
 │   ├── browser_sdk.py      浏览器操作（智能+原生方法）
 │   ├── desktop_sdk.py      桌面应用操作（控件+图像识别，金蝶K/3等）
-│   ├── cookie_manager.py   多平台Cookie管理（自动检测+浏览器刷新）
+│   ├── cookie_manager.py   ★ 多平台Cookie管理（按域名过滤+存取）
 │   ├── mysql_sdk.py        数据库操作（实体类自动建表）
 │   ├── excel_sdk.py        Excel处理
 │   ├── chart_sdk.py        图表生成
 │   ├── local_config.py     本地路径配置
 │   ├── entities/           ★ 实体类（每个任务一个，带表名唯一标识）
 │   │   ├── __init__.py     基类+Column()+@register_entity+自动扫描
-│   │   └── jd_ibay_sales.py 京东艾贝出库实体
-│   └── platforms/          ★ 平台工具类（Cookie+API+失效刷新）
+│   │   ├── business_models.py  业务表
+│   │   ├── finance_models.py   财务表
+│   │   ├── task_models.py      任务历史表
+│   │   ├── user_models.py      用户表
+│   │   └── jd_ibay_sales.py    京东艾贝出库实体
+│   └── platforms/          ★ 平台工具类（Cookie探活+去重预警+API失效刷新）
 │       ├── __init__.py     基类+@register_platform+自动扫描
 │       ├── jd.py           京东（.jd.com）
 │       ├── pdd.py          拼多多（.pdd.com）
 │       └── wechat_pay.py   微信支付（.weixin.qq.com）
-│
-├── models/                 ── 数据表定义 ──
-│   ├── base.py             SQLAlchemy基类
-│   ├── finance_models.py   财务表
-│   ├── business_models.py  业务表
-│   ├── task_models.py      任务历史表
-│   └── user_models.py      用户表
 │
 ├── local_configs/          ── 用户本地配置 ──
 │   ├── config_schema.yaml  配置项定义
@@ -144,7 +141,7 @@ src/web/api.py              收到请求，调用 TaskExecutor
 src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
     ↓
     ├── 步骤 type: browser/api  → 调 workflows/xxx.py 的 run() 函数
-    ├── 步骤 type: data         → 调 data_processors/xxx.py 的 process() 函数
+    ├── 步骤 type: data         → 调 data_clean/xxx.py 的 process() 函数
     └── 步骤 type: deliver      → 调 delivery_service 保存文件到指定位置
 ```
 
@@ -154,9 +151,97 @@ src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
 |------|------|------|
 | `data/tasks/xxx.yaml` | 任务配置（步骤、参数、描述） | 菜谱 |
 | `workflows/xxx.py` | 浏览器/API自动化逻辑 | 厨师做菜 |
-| `data_processors/xxx.py` | 数据清洗逻辑 | 摆盘装饰 |
+| `data_clean/xxx.py` | 数据清洗逻辑 | 摆盘装饰 |
 
 **YAML 定义"做什么"，Python 实现"怎么做"。**
+
+---
+
+## Cookie 管理体系
+
+两大模块配合工作：`sdk/cookie_manager.py`（存取 + 过滤）+ `sdk/platforms/__init__.py`（web_api 全链路防护）。
+
+### 一、存取与过滤（cookie_manager.py）
+
+| 能力 | 说明 |
+|------|------|
+| Redis 存取 | cookie → `agent:cookies:{key}`，默认 30 天过期。**读 cookie 不再自动续期**；续期只发生在两处「真的打请求验证过有效」的路径：① probe_cookie 探活HTTP通过（非缓存命中） ② web_api 真实请求通过 _is_expired 检测 |
+| 按域名过滤 ✨新版 | 每个平台配 `cookie_domain`（如 `jd.com`），保留**域名匹配 + 核心cookie名**，丢弃第三方统计 cookie。比老版「只保留核心名」更稳，比全量保存更干净 |
+| 核心 cookie 兜底 | `pin` / `thor` / `L_PASS_ID` 等核心名即使域名不匹配也强制保留 |
+| 同名同域名去重 | 保留最后一个（即最新值） |
+| 三道兜底 | ①核心名强制留 ②本地 JSON 永远保存全量备份 ③过滤日志打前后数量对比 |
+
+每个平台的配置（`PLATFORM_CONFIG` 里）：
+```python
+"jd_shangzhi": {
+    "login_url": "https://shop.jd.com/...",              # 探活和刷新用
+    "cookie_domain": "jd.com",                             # 过滤用（关键新增）
+    "core_cookies": ["pin", "thor", "pinId", "_pst"],      # 登录检测 + 兜底
+    # ---------- 以下为可选字段，不填走默认兜底 ----------
+    "critical_cookie": "thor",                             # 关键鉴权cookie，值长度≥16（防placeholder）
+    "success_signals": ["退出", "注销", "商家中心", "商智"], # 页面成功信号（命中任一即视为已登录）
+    "verify_url": "https://shop.jd.com/api/xxx",           # 【可选】真试验证接口URL
+}
+```
+
+### 一点五、登录完成判定（三层信号，防止存到 placeholder/旧cookie）
+
+当你在 Web 界面点「🔄 刷新」→ 浏览器打开让你登录 → `wait_login_auto()` 每 3 秒轮询一次，**必须同时通过前两层**才会保存 cookie（第三层可选预留）：
+
+| 层级 | 名称 | 检查什么 | 不通过的常见原因 |
+|------|------|---------|-----------------|
+| ① | cookie 硬门槛 | a) 核心 cookie ≥ 2 个有值 <br> b) `critical_cookie` 指定值长度 ≥ 16 字符 | 密码还没输，平台先下发了个 placeholder `thor=1` |
+| ② | 页面成功信号 | a) 当前 URL **不包含** `login / passport / 登录 / sso` 等关键字（不在登录页）<br> b) title 或正文前 2000 字命中任一 `success_signals` 关键词 | 扫码成功后还在跳转中，页面还在 `passport.jd.com/...` |
+| ③ | 真试验证（预留，默认关闭） | 如果配了 `verify_url` 就发 GET 看是不是没跳登录 | — |
+
+**卡在某层怎么看？** 终端 / 后台日志会每轮打印：
+```
+轮询#12 (36.0s): 核心cookie 1/4≥2 | 原因：关键cookie thor 值太短/缺失、页面仍在登录页或未发现登录成功信号 | URL: https://passport.jd.com/new/login.aspx
+```
+看到 `原因：xxx` 就知道差在哪一层了。
+
+### 二、web_api 四步防护（PlatformBase）
+
+每次调用 `web_api()` 都会按顺序执行以下流程（⚠️ 注意：探活只是**建议性质**，不当法官，不会乱删 cookie）：
+
+```
+调用 web_api(url, cookie_key, ...)
+    ↓ ① TTL 预警（先检查再续期，看到的是真实剩余）
+    TTL < 7 天 → 发「即将过期」钉钉提醒（12小时去重）
+
+    ↓ ② 轻量探活【只是建议，不当法官】✨新行为
+    · 若 cookie TTL 很接近 30 天（30 分钟内刚保存的）→ 信任新鲜cookie，跳过 ✅
+    · 若 8 小时内探活缓存命中 → 跳过 ✅
+    · 真发 GET login_url + cookie，allow_redirects=False
+      → 跳登录 / 401 / 403 / 页面含「未登录」 → 疑似失效
+         ❗ 只打 warning，**不删 cookie / 不抛异常**，继续走③
+      → 通过 → 写8小时缓存 + 续TTL 30天
+
+    ↓ ③ 真实 API 请求 + 响应过期检测【最终法官】
+    子类 _is_expired() 判定失效 → 删 cookie + 发失效通知（5分钟去重）+ 抛CookieExpiredError
+
+    ↓ ④ 成功调用 → 从这一刻起 TTL 续期 30 天
+    返回解析后的 JSON
+```
+
+### 三、钉钉通知去重
+
+用 Redis `SETNX + EX` 实现，不增加任何新依赖：
+
+| 通知类型 | 去重周期 | Redis Key |
+|---------|---------|-----------|
+| Cookie 失效（最终法官判定） | 5 分钟 | `agent:dedup:cookie_notify:expired:{key}` |
+| Cookie 即将过期（TTL预警） | 12 小时 | `agent:dedup:cookie_notify:warning:{key}` |
+| 探活成功缓存 | 8 小时 | `agent:cookie_probe_ok:{key}` |
+
+> **多个任务同时发现同一个 cookie 失效 → 只发 1 条钉钉。**
+
+### 四、新增平台要填的 3+3 件事（3 必选 3 可选）
+
+1. **必选**：`cookie_manager.PLATFORM_CONFIG` 里填 `login_url` / `cookie_domain` / `core_cookies`
+2. **可选**：同处再补 `critical_cookie`（关键鉴权 cookie 名）+ `success_signals`（登录成功信号词列表），**填了能大幅降低误判保存概率**
+3. `sdk/platforms/xxx.py` 继承 `PlatformBase`，至少实现 `_is_expired()`
+4. 其他不用改 → 自动拥有：探活 / 去重 / 预警 / 续期 / 三层登录判定 / 30分钟新鲜cookie跳过探活 全套能力
 
 ---
 
@@ -313,10 +398,10 @@ async def run(date_from=None, date_to=None, output_dir=None, **kwargs):
 ```
 
 ### 第2步（可选）：写数据清洗脚本
-在 `data_processors/` 目录下新建 `.py` 文件：
+在 `data_clean/` 目录下新建 `.py` 文件：
 
 ```python
-# data_processors/my_task.py
+# data_clean/my_task.py
 import pandas as pd
 
 def process(input_file, context=None, params=None, **kwargs):
@@ -365,7 +450,7 @@ steps:
     action: process_data
     description: 清洗数据
     params:
-      module: data_processors.my_task   # 对应 data_processors/my_task.py
+      module: data_clean.my_task        # 对应 data_clean/my_task.py
       function: process                 # 对应 process() 函数
 
   - type: deliver
@@ -524,7 +609,7 @@ steps:
     action: process_data
     description: 清洗数据
     params:
-      module: data_processors.jindie_material
+      module: data_clean.jindie_material
       function: process
 ```
 

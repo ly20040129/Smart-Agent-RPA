@@ -85,10 +85,72 @@ class AuthManager:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    # 允许的角色白名单
+    VALID_ROLES = ("admin", "user")
+    # 默认密码重置规则：新密码 = 用户名 + "123"
+    @staticmethod
+    def default_reset_password(username: str) -> str:
+        return f"{username}123"
+
     # ==================== 用户管理 ====================
 
-    def create_user(self, username: str, password: str, department: str, role: str = "user") -> bool:
-        """创建用户"""
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        department: str,
+        role: str = "user",
+        creator_role: str = None,
+        creator_department: str = None,
+    ) -> bool:
+        """
+        创建用户（支持后端双重权限校验）
+
+        Args:
+            creator_role:       创建者的角色（None=超管，不受以下两条约束）
+            creator_department: 创建者所在部门（当 creator_role != 'admin' 时生效）
+
+        后端约束（就算前端绕过/没隐藏按钮，这里也会硬拒）：
+          1. 必填校验：用户名/密码/部门 不能为空；密码≥4位
+          2. 角色白名单：role 必须在 VALID_ROLES（admin/user）内，非法值降级为 user
+          3. 提权拦截：非 admin 创建者 → 禁止创建/升级 role=admin 的账号，强制降为 user
+          4. 部门隔离：非 admin 创建者 → 只能给自己所在部门建人，跨部门返回 False
+          5. 唯一性：用户名已存在 → False
+        """
+        # ---- 1) 必填 + 基础长度校验 ----
+        if not username or not password or not department:
+            logger.warning(f"创建用户失败: 必填字段为空 (username={username!r}, dept={department!r})")
+            return False
+        if len(password) < 4:
+            logger.warning(f"创建用户失败: 密码太短 (<4位) user={username}")
+            return False
+        if len(username) > 32 or len(department) > 32:
+            logger.warning(f"创建用户失败: 用户名/部门名太长 user={username}")
+            return False
+
+        # ---- 2) role 白名单（非法值降级为 user）----
+        if role not in self.VALID_ROLES:
+            logger.info(f"创建用户 user={username}: 非法 role={role!r}，降级为 user")
+            role = "user"
+
+        # ---- 3) 提权拦截：非 admin 创建者不能建 admin 账号 ----
+        if creator_role and creator_role != "admin" and role == "admin":
+            logger.warning(
+                f"提权拦截：创建者({creator_role})试图创建 role=admin 的账号 user={username}，"
+                f"已强制降级为 user"
+            )
+            role = "user"
+
+        # ---- 4) 部门隔离：非 admin 只能给自己部门建人 ----
+        if creator_role and creator_role != "admin" and creator_department:
+            if department != creator_department:
+                logger.warning(
+                    f"部门隔离：创建者(dept={creator_department})试图给其他部门建人 "
+                    f"(target={department})，已拒绝"
+                )
+                return False
+
+        # ---- 5) 唯一性 + 落盘 ----
         users = self._load_json(self.users_file)
         if username in users:
             logger.warning(f"用户已存在: {username}")
@@ -101,20 +163,52 @@ class AuthManager:
             "created_at": datetime.now().isoformat()
         }
         self._save_json(self.users_file, users)
-        logger.info(f"用户已创建: {username} -> {department}")
+        logger.info(f"用户已创建: {username} -> dept={department}, role={role}"
+                    + (f" (by {creator_role}/{creator_department})" if creator_role else ""))
         return True
 
-    def delete_user(self, username: str) -> bool:
-        """删除用户"""
-        if username == "admin":
-            return False
+    def reset_password(self, username: str, new_password: str = None) -> Optional[str]:
+        """
+        重置用户密码。new_password 缺省时按默认规则生成（用户名+123）。
+        返回设置的明文密码（方便前端提示用户），失败返回 None。
+        """
+        if not username or username == "":
+            return None
+        if new_password is None:
+            new_password = self.default_reset_password(username)
+        if len(new_password) < 4:
+            return None
         users = self._load_json(self.users_file)
-        if username in users:
-            del users[username]
-            self._save_json(self.users_file, users)
-            logger.info(f"用户已删除: {username}")
-            return True
-        return False
+        if username not in users:
+            return None
+        users[username]["password"] = self._hash_password(new_password)
+        users[username]["updated_at"] = datetime.now().isoformat()
+        self._save_json(self.users_file, users)
+        logger.info(f"用户密码已重置: {username}")
+        return new_password
+
+    def delete_user(self, username: str, deleter_role: str = None) -> bool:
+        """
+        删除用户。
+        规则：admin 账号永远不可删（防锁死自己）；
+              非 admin 删除者想删 admin → 拒绝（防普通用户越权删管理员）。
+        """
+        users = self._load_json(self.users_file)
+        if username not in users:
+            return False
+        target_role = users[username].get("role", "user")
+        # 1) admin 账号永远不可删
+        if username == "admin":
+            logger.warning(f"试图删除默认admin账号，拒绝")
+            return False
+        # 2) 非 admin 删除者 想删 role=admin 的账号 → 拒绝
+        if deleter_role and deleter_role != "admin" and target_role == "admin":
+            logger.warning(f"越权：deleter={deleter_role} 试图删除 admin-role user={username}，拒绝")
+            return False
+        del users[username]
+        self._save_json(self.users_file, users)
+        logger.info(f"用户已删除: {username}")
+        return True
 
     def update_user(self, username: str, **kwargs) -> bool:
         """更新用户信息"""

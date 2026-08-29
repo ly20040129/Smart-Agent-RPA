@@ -119,7 +119,7 @@ class TaskQueueManager:
         return f"{task_id}:{username}:{params_hash}"
 
     def _find_same_job_locked(self, dedup_key: str, task_id: str, user_info: Optional[dict], user_params: Optional[dict]) -> Optional[Job]:
-        """内存兜底：在当前进程的 job 里找 60 秒内同用户/同参数/同任务的运行/等待中 job，命中则直接复用"""
+        """内存兜底：在当前进程的 job 里找 120 秒内同用户/同参数/同任务且仍在排队/运行中的 job，命中则直接复用"""
         now = time.time()
         username = (user_info or {}).get("username", "") or "__guest__"
         for job in self._jobs.values():
@@ -127,7 +127,8 @@ class TaskQueueManager:
                 continue
             if ((job.user_info or {}).get("username", "") or "__guest__") != username:
                 continue
-            if job.status not in (JobStatus.PENDING, JobStatus.RUNNING, JobStatus.SUCCESS, JobStatus.FAILED):
+            # 只去重正在排队或运行中的 job，已完成的允许重新提交
+            if job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
                 continue
             # 命中去重只看最近 120s 内的（与 Redis TTL 对齐）
             if now - job.created_at > 120:
@@ -172,23 +173,27 @@ class TaskQueueManager:
                 return existed.job_id
 
         # --- 第 2 步：Redis 级去重（跨进程/单机重启后仍能命中短时间重复） ---
-        reused_job_id: Optional[str] = None
         if storage_manager is not None and storage_manager.is_redis_available:
             existed_job_id = storage_manager.get_submit_dedup_job(dedup_key)
             if existed_job_id:
                 async with self._lock:
                     job = self._jobs.get(existed_job_id)
-                # 内存里还有就直接复用
-                if job is not None:
-                    reused_job_id = job.job_id
+                if job is not None and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                    logger.info(
+                        f"[TaskQueue] 命中Redis去重，复用 job={job.job_id} "
+                        f"task={task_id} user={(user_info or {}).get('username', '')}"
+                    )
+                    self._notify(job)
+                    return job.job_id
                 else:
-                    # 内存里没有（例如进程刚重启），仍视为同一次提交，返回 Redis 里保存的 job_id
-                    reused_job_id = existed_job_id
-                logger.info(
-                    f"[TaskQueue] 命中Redis去重，复用 job={reused_job_id} "
-                    f"task={task_id} user={(user_info or {}).get('username', '')}"
-                )
-                return reused_job_id
+                    # Redis 有 key 但内存里没有对应 job（服务器重启）或 job 已结束 → 清除过期 key，继续创建新 job
+                    logger.info(
+                        f"[TaskQueue] Redis去重键指向已失效的 job={existed_job_id}，清除并重新提交"
+                    )
+                    try:
+                        storage_manager.clear_submit_dedup(dedup_key)
+                    except Exception:
+                        pass
 
         # --- 第 3 步：新建 job ---
         job_id = uuid.uuid4().hex[:12]
