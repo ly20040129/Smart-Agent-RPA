@@ -1,64 +1,48 @@
 # -*- coding: utf-8 -*-
-import os
-import sys
-import asyncio
+"""钉钉测试 workflow：生成Excel + 单聊发给 dingtalk_userid"""
+import sys, asyncio
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from src.agent.delivery_service import DeliveryService
-from src.core.config import get_config
+from loguru import logger
 
 
 async def test_send_file(**kwargs):
-    """
-    测试钉钉发送文件
-    """
-    print("开始测试钉钉文件发送...")
+    userid = (kwargs.get("dingtalk_userid") or "").strip()
+    if not userid:
+        return {"status": "failed", "error": "缺少 dingtalk_userid"}
 
-    # 1. 创建一个测试 Excel 文件
-    test_data = pd.DataFrame({
-        "测试列1": [1, 2, 3],
-        "测试列2": ["A", "B", "C"],
-        "测试时间": [datetime.now()] * 3
-    })
-    
-    out_dir = Path(r"C:\Users\31557\Desktop")
-    out_dir.mkdir(exist_ok=True, parents=True)
-    file_path = out_dir / f"钉钉测试文件_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    test_data.to_excel(str(file_path), index=False)
-    print(f"✅ 测试文件已生成: {file_path}")
+    # 1) 生成测试Excel
+    out_dir = _ROOT / "data" / "output" / "钉钉测试"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    file = out_dir / f"test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    pd.DataFrame({
+        "序号": [1, 2, 3],
+        "商品": ["A", "B", "C"],
+        "时间": [datetime.now()] * 3,
+    }).to_excel(str(file), index=False)
+    logger.info(f"生成文件: {file}")
 
-    # 2. 获取配置（使用 config_data 属性访问原始字典）
-    config = get_config()
-    delivery_config = config.config_data.get("delivery", {})
-    dingtalk_config = delivery_config.get("dingtalk", {})
-    
-    user_config = {
-        "delivery": {
-            "dingtalk": dingtalk_config
-        }
-    }
-
-    print(f"📋 钉钉配置: app_key={dingtalk_config.get('app_key', '未配置')[:10]}...")
-
-    # 3. 发送钉钉文件
-    delivery = DeliveryService()
-    result = await delivery.deliver(
-        file_path=str(file_path),
-        user_config=user_config,
+    # 2) 单聊发钉钉（config.yaml里的delivery.dingtalk会被DeliveryService自己读取）
+    res = await DeliveryService().deliver(
+        file_path=str(file),
+        user_config={},
         task_name="钉钉测试",
         channels=["dingtalk"],
-        dingtalk_userid="1783298686946923"  # ← 改成你的钉钉 userid
+        dingtalk_userid=userid,
     )
-
-    print(f"✅ 钉钉发送结果: {result}")
-    return {"file": str(file_path), "result": result}
+    return {"file": str(file), "result": res}
 
 
 if __name__ == "__main__":
-    asyncio.run(test_send_file())
+    USERID = ""   # 本地调试时填自己的 userid
+    if USERID:
+        asyncio.run(test_send_file(dingtalk_userid=USERID))
+    else:
+        print("先在 __main__ 里填 USERID，或直接跑Web任务")

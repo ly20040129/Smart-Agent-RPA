@@ -1,0 +1,20 @@
+department: admin
+description: 测试钉钉自建机器人单聊（delivery.dingtalk）：文字+Excel文件
+enabled: true
+mode: api
+name: 钉钉单聊自建机器人测试
+schedule: ''
+steps:
+- action: send_oto_message
+  description: 单聊发文字通知
+  params:
+    dingtalk_userid: '1783298686946923'
+    message: 你好～马上给你发Excel。
+  type: api
+- action: run_workflow
+  description: 生成Excel并单聊发文件
+  params:
+    dingtalk_userid: '1783298686946923'
+    function: test_send_file
+    module: workflows.dingtalk_test
+  type: api

@@ -14,7 +14,8 @@ from loguru import logger
 from src.agent.smart_browser import SmartBrowser
 from src.agent.smart_data_processor import SmartDataProcessor
 from src.agent.task_manager import TaskManager
-from src.agent.dingtalk import DingTalkWebhook, build_webhook
+from src.agent.dingtalk_webhook import DingtalkWebhook, build_webhook
+from src.agent.dingtalk_robot import DingtalkRobot, build_robot
 from src.storage import storage_manager
 from src.core.config import get_config
 from src.agent.delivery_service import DeliveryService
@@ -37,7 +38,8 @@ class TaskExecutor:
         self.template_manager = TemplateManager()
         self.recovery = None  # 智能异常自修复（按需初始化）
         self._current_user = None
-        self._dingtalk: Optional[DingTalkWebhook] = None  # 延迟构建，拿到 task_config & user_config 后再建
+        self._dingtalk: Optional[DingtalkWebhook] = None  # 群聊Webhook（通用通知/告警）
+        self._dingtalk_robot: Optional[DingtalkRobot] = None  # 单聊自建应用（给具体人发消息/文件）
 
     async def execute_task(self, task_id: str, user_params: Dict = None, job_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -60,9 +62,9 @@ class TaskExecutor:
         if not task_config.get("enabled", True):
             return {"status": "failed", "error": "任务已禁用"}
 
-        # 构建钉钉通知器（按 task_config > user_config 优先级）
         user_config = self._current_user.get("config", {}) if self._current_user else {}
         self._dingtalk = build_webhook(user_config=user_config, task_config=task_config)
+        self._dingtalk_robot = build_robot(user_config=user_config)
         username = self._current_user.get("username", "") if self._current_user else ""
 
         logger.info(f"{'='*60}")
@@ -647,13 +649,20 @@ class TaskExecutor:
 
         workflow_module = params.get("module", "")
         workflow_func = params.get("function", "run")
-        user_params = context.get("user_params", {})
+
+        # 参数合并优先级（由低到高）：
+        #   1. yaml里这一步 step.params 写死的值（比如 dingtalk_userid、timeout）
+        #   2. Web界面每次执行填的 context.user_params（用户临时改的东西）
+        # 只拿「不是控制字段(module/function)」的普通参数参与合并
+        step_params = {k: v for k, v in params.items() if k not in ("module", "function")}
+        user_params = dict(step_params)
+        user_params.update(context.get("user_params", {}) or {})
 
         if not workflow_module:
             return {"status": "failed", "error": "未指定workflow模块(module)"}
 
         logger.info(f"  Workflow: 调用 {workflow_module}.{workflow_func}()")
-        logger.info(f"  用户参数: {user_params}")
+        logger.info(f"  传参（step.params + user_params 合并）: {user_params}")
 
         try:
             mod = importlib.import_module(workflow_module)
@@ -800,8 +809,17 @@ class TaskExecutor:
     ) -> Dict[str, Any]:
         """执行API调用步骤"""
         if action == "run_workflow":
-            # API任务调用自定义workflow脚本，复用browser的通用workflow执行逻辑
             return await self._execute_workflow_step(params, context)
+
+        # 钉钉通知类action也支持在api步骤里用（统一 type: api，不再需要 notify）
+        notify_actions = {
+            "dingtalk_text", "dingtalk", "text",
+            "dingtalk_markdown", "markdown",
+            "send_oto_message", "oto_text", "dingtalk_oto",
+            "send_oto_markdown", "oto_markdown",
+        }
+        if action in notify_actions:
+            return await self._execute_notify_step(action, params, context)
 
         return {"status": "failed", "error": f"未知API动作: {action}"}
 
@@ -830,11 +848,13 @@ class TaskExecutor:
             
             channels = params.get("channels")
             task_name = params.get("task_name", "")
+            dingtalk_userid = params.get("dingtalk_userid")
             result = await self.delivery_service.deliver(
                 file_path=file_path,
                 user_config=user_config,
                 task_name=task_name,
-                channels=channels
+                channels=channels,
+                dingtalk_userid=dingtalk_userid,
             )
             success_ch = [k for k, v in result.items() if isinstance(v, dict) and v.get("success")]
             failed_ch = [k for k, v in result.items() if isinstance(v, dict) and not v.get("success")]
@@ -852,55 +872,79 @@ class TaskExecutor:
         context: Dict
     ) -> Dict[str, Any]:
         """
-        执行通知步骤
+        执行通知步骤（两种机器人，按 action 区分）：
 
-        支持的 action：
-          - dingtalk_text:     钉钉纯文本消息
+        【群聊 Webhook 机器人】 —— 任务通知/告警，发在群里：
+          - dingtalk_text / dingtalk / text
               params: {message, at_mobiles:[], at_all:bool}
-          - dingtalk_markdown: 钉钉 Markdown 消息
+          - dingtalk_markdown / markdown
               params: {title, text, at_mobiles:[], at_all:bool}
-          - (默认) log:        仅写日志（兼容历史 notify 步骤）
+
+        【自建应用单聊机器人】 —— 给具体用户发 1 对 1 文字通知：
+          - send_oto_message / oto_text / dingtalk_oto
+              params: {dingtalk_userid, message}                # 纯文本
+          - send_oto_markdown / oto_markdown
+              params: {dingtalk_userid, title, text}            # Markdown
+
+        【默认】 —— 仅写日志，兼容历史 notify 步骤
         """
         message = params.get("message", "任务通知")
         logger.info(f"📢 通知(action={action}): {message}")
 
+        # --------- 群聊 Webhook 机器人 ---------
         try:
             if action in ("dingtalk_text", "dingtalk", "text"):
                 if not (self._dingtalk and self._dingtalk.enabled):
-                    return {
-                        "status": "success",
-                        "warning": "钉钉未配置 webhook，仅输出日志占位",
-                        "skipped": True,
-                    }
+                    return {"status": "success", "skipped": True, "warning": "群聊Webhook未配置(notifications.dingtalk.webhook)，仅输出日志"}
                 res = self._dingtalk.send_text(
                     content=message,
                     at_mobiles=params.get("at_mobiles"),
                     at_all=bool(params.get("at_all", False)),
                 )
                 if res.get("success") or res.get("skipped"):
-                    return {"status": "success", "context": {"dingtalk_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉发送失败")}
+                    return {"status": "success", "context": {"dingtalk_webhook_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉群聊发送失败")}
 
             if action in ("dingtalk_markdown", "markdown"):
                 if not (self._dingtalk and self._dingtalk.enabled):
-                    return {
-                        "status": "success",
-                        "warning": "钉钉未配置 webhook，仅输出日志占位",
-                        "skipped": True,
-                    }
+                    return {"status": "success", "skipped": True, "warning": "群聊Webhook未配置(notifications.dingtalk.webhook)，仅输出日志"}
                 title = params.get("title") or "智能体平台通知"
                 text = params.get("text") or message
                 res = self._dingtalk.send_markdown(
-                    title=title,
-                    text=text,
+                    title=title, text=text,
                     at_mobiles=params.get("at_mobiles"),
                     at_all=bool(params.get("at_all", False)),
                 )
                 if res.get("success") or res.get("skipped"):
-                    return {"status": "success", "context": {"dingtalk_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉发送失败")}
+                    return {"status": "success", "context": {"dingtalk_webhook_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉群聊发送失败")}
 
-            # 默认：仅写日志
+            # --------- 自建应用单聊机器人 ---------
+            if action in ("send_oto_message", "oto_text", "dingtalk_oto"):
+                userid = (params.get("dingtalk_userid") or "").strip()
+                if not userid:
+                    return {"status": "failed", "error": "缺少 dingtalk_userid。单聊通知必须指定接收人"}
+                if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
+                    return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
+                res = self._dingtalk_robot.send_text(content=message, userid=userid)
+                if res.get("success"):
+                    return {"status": "success", "context": {"dingtalk_oto_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉单聊文本发送失败")}
+
+            if action in ("send_oto_markdown", "oto_markdown"):
+                userid = (params.get("dingtalk_userid") or "").strip()
+                if not userid:
+                    return {"status": "failed", "error": "缺少 dingtalk_userid。单聊通知必须指定接收人"}
+                if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
+                    return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
+                title = params.get("title") or "通知"
+                text = params.get("text") or message
+                res = self._dingtalk_robot.send_markdown(title=title, text=text, userid=userid)
+                if res.get("success"):
+                    return {"status": "success", "context": {"dingtalk_oto_result": res}}
+                return {"status": "failed", "error": res.get("error", "钉钉单聊Markdown发送失败")}
+
+            # --------- 默认：仅写日志 ---------
             return {"status": "success"}
         except Exception as e:
             logger.warning(f"通知步骤执行异常(不影响主流程): {e}")

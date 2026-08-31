@@ -131,5 +131,89 @@
     "status": "success",
     "error": null,
     "elapsed_time": 1.78
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:43:32.739724",
+    "status": "failed",
+    "error": "步骤2失败: 未知步骤类型: delivery（诊断: 未知错误: 未知步骤类型: delivery）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:47:42.813626",
+    "status": "failed",
+    "error": "步骤2失败: 没有可交付的文件（已重试3次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:53:42.251165",
+    "status": "failed",
+    "error": "步骤3失败: 没有可交付的文件（已重试3次仍失败）",
+    "elapsed_time": null
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:54:33.732811",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.89
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:55:54.894625",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.58
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:58:05.453271",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 2.03
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T11:09:02.311075",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 0.55
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T11:12:23.353381",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 0.56
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T11:38:09.029475",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 0.21
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T12:00:38.775677",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 4.85
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T12:44:31.794109",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 3.84
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T12:45:02.461189",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 3.15
   }
 ]

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List
 from loguru import logger
 
-from src.agent.dingtalk import DingTalkApp, build_app
+from src.agent.dingtalk_robot import build_robot
 
 
 class DeliveryService:
@@ -49,15 +49,13 @@ class DeliveryService:
         return {"success": True, "path": dest}
 
     async def _send_dingtalk(self, file_path: str, user_config: Dict, userid: str) -> Dict:
-        app = build_app(user_config)
-        if not app.enabled:
-            from src.core.config import get_config
-            cfg = get_config().config_data.get("delivery", {}).get("dingtalk", {})
-            if cfg.get("app_key"):
-                app = DingTalkApp(cfg.get("app_key"), cfg.get("app_secret"), cfg.get("agent_id"))
-        if not app.enabled:
-            return {"success": False, "error": "钉钉自建应用未配置"}
-        return app.send_file(file_path, userid)
+        # build_robot 内部已按「user_config.delivery.dingtalk -> 全局 delivery.dingtalk」读好
+        robot = build_robot(user_config)
+        if not robot.enabled:
+            return {"success": False, "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
+        if not userid:
+            return {"success": False, "error": "缺少接收人 dingtalk_userid（在任务yaml params 里配置）"}
+        return robot.send_file(file_path, userid)
 
     async def _send_email(self, file_path: str, user_config: Dict) -> Dict:
         cfg = user_config.get("email_settings", {})

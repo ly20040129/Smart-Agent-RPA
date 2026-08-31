@@ -206,7 +206,7 @@ class PlatformBase:
         if not self._dedup_notify("warning", cookie_key, self._NOTIFY_WARNING_TTL):
             return
         try:
-            from src.agent.dingtalk import build_webhook
+            from src.agent.dingtalk_webhook import build_webhook
             webhook = build_webhook()
             if webhook.enabled:
                 webhook.send_text(
@@ -345,7 +345,7 @@ class PlatformBase:
             logger.debug(f"Cookie失效通知去重（5分钟内已发过，跳过）: {cookie_key}")
             return
         try:
-            from src.agent.dingtalk import build_webhook
+            from src.agent.dingtalk_webhook import build_webhook
             webhook = build_webhook()
             if webhook.enabled:
                 webhook.send_text(

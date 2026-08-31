@@ -48,7 +48,8 @@ smart_agent_platform/
 ├── workflows/              ★ 写自动化脚本的地方 ──
 │   ├── wechat_pay_bill.py  公众号资金账单（浏览器自动化）
 │   ├── jd_ibay_self.py     京东艾贝自营仓（浏览器自动化）
-│   └── jd_ibay_self_api.py 京东艾贝自营仓（API自动化）
+│   ├── jd_ibay_self_api.py 京东艾贝自营仓（API自动化）
+│   └── dingtalk_test.py    钉钉单聊发文件测试（生成Excel+发送）
 │
 ├── data_clean/             ── 数据清洗脚本 ──
 │   ├── wechat_bill.py      公众号账单清洗
@@ -87,7 +88,9 @@ smart_agent_platform/
 │   │   ├── smart_desktop.py    智能桌面（LLM选控件，金蝶/网点管家等）
 │   │   ├── smart_data_processor.py  智能数据处理器（含数据理解）
 │   │   ├── smart_recovery.py   智能异常自修复（LLM诊断+自动重试）
-│   │   ├── delivery_service.py 文件交付服务
+│   │   ├── delivery_service.py 文件交付服务（钉钉单聊发文件）
+│   │   ├── dingtalk_webhook.py 钉钉群聊Webhook机器人（通知/告警）
+│   │   ├── dingtalk_robot.py   钉钉单聊自建机器人（发文件/文字给具体人）
 │   │   └── template_manager.py 模板管理
 │   ├── auth/
 │   │   └── auth_manager.py     用户认证、JWT
@@ -140,9 +143,10 @@ src/web/api.py              收到请求，调用 TaskExecutor
     ↓
 src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
     ↓
-    ├── 步骤 type: browser/api  → 调 workflows/xxx.py 的 run() 函数
-    ├── 步骤 type: data         → 调 data_clean/xxx.py 的 process() 函数
-    └── 步骤 type: deliver      → 调 delivery_service 保存文件到指定位置
+    ├── 步骤 type: api   → 调 workflows/xxx.py 的 run() 函数 / 钉钉通知
+    ├── 步骤 type: browser → 调 workflows/xxx.py 的 run() 函数（带浏览器）
+    ├── 步骤 type: data  → 调 data_clean/xxx.py 的 process() 函数
+    └── 步骤 type: deliver → 调 delivery_service 保存/发送文件到指定位置
 ```
 
 ### YAML 和 Python 的关系
@@ -242,6 +246,75 @@ src/agent/task_executor.py  读取 data/tasks/xxx.yaml，按步骤执行
 2. **可选**：同处再补 `critical_cookie`（关键鉴权 cookie 名）+ `success_signals`（登录成功信号词列表），**填了能大幅降低误判保存概率**
 3. `sdk/platforms/xxx.py` 继承 `PlatformBase`，至少实现 `_is_expired()`
 4. 其他不用改 → 自动拥有：探活 / 去重 / 预警 / 续期 / 三层登录判定 / 30分钟新鲜cookie跳过探活 全套能力
+
+---
+
+## 钉钉机器人
+
+两类机器人，**两个文件、两套配置、互不干扰**：
+
+| 类型 | 代码文件 | 配置位置（config.yaml） | 能做什么 |
+|------|---------|------------------------|---------|
+| 群聊Webhook | `src/agent/dingtalk_webhook.py` | `notifications.dingtalk` | 群聊通知/告警（Markdown/纯文本） |
+| 单聊自建应用 | `src/agent/dingtalk_robot.py` | `delivery.dingtalk` | 给具体人发文字/文件（1对1） |
+
+### config.yaml 配置
+
+```yaml
+# 机器人A：群聊Webhook（通知用）
+notifications:
+  dingtalk:
+    webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxx"
+    secret: "SECxxx"
+
+# 机器人B：单聊自建应用（发文件/文字给具体人）
+delivery:
+  dingtalk:
+    app_key: "dingxxx"
+    app_secret: "xxx"
+    agent_id: 123456   # 兼容保留，新API不使用
+```
+
+### YAML 任务中用法
+
+所有钉钉相关步骤统一用 `type: api`：
+
+```yaml
+# 群聊发Markdown通知
+- action: dingtalk_markdown
+  type: api
+  params:
+    title: "任务开始"
+    text: "内容..."
+
+# 群聊发纯文本
+- action: dingtalk_text
+  type: api
+  params:
+    message: "内容..."
+
+# 单聊发文字（需要 dingtalk_userid）
+- action: send_oto_message
+  type: api
+  params:
+    dingtalk_userid: "1783298686946923"
+    message: "内容..."
+
+# 单聊发Markdown（需要 dingtalk_userid）
+- action: send_oto_markdown
+  type: api
+  params:
+    dingtalk_userid: "1783298686946923"
+    title: "标题"
+    text: "内容..."
+```
+
+### 测试文件
+
+| 文件 | 测哪个机器人 |
+|------|------------|
+| `data/tasks/test_webhook.yaml` | 群聊Webhook（Markdown + 纯文本） |
+| `data/tasks/test_robot.yaml` | 单聊自建机器人（文字 + 生成Excel发文件） |
 
 ---
 

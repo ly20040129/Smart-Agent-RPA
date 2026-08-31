@@ -3,21 +3,21 @@ description: 通过浏览器自动化获取京东艾贝自营仓实销实结明�
 enabled: true
 mode: browser
 name: 京东艾贝自营仓销售出库(浏览器)
-schedule: ''
 params_input:
 - key: date_from
   label: 开始日期
-  type: date
   required: true
+  type: date
 - key: date_to
   label: 结束日期
+  required: true
   type: date
-  required: true
-- key: output_dir
+- help: 选择文件保存的目录
+  key: output_dir
   label: 保存位置
-  type: path
   required: true
-  help: 选择文件保存的目录
+  type: path
+schedule: ''
 steps:
 - action: run_workflow
   description: 调用浏览器自动化获取实销实结明细数据
@@ -34,8 +34,8 @@ steps:
 - action: deliver_file
   params:
     channels:
-      - dingtalk
-      - local
+    - dingtalk
+    - local
     task_name: 京东艾贝自营仓销售出库
   type: deliver
-
+updated_at: '2026-08-31T11:30:11.589912'

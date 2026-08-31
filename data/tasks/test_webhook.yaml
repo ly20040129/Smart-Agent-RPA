@@ -1,0 +1,18 @@
+department: admin
+description: 测试钉钉群聊Webhook机器人（notifications.dingtalk）
+enabled: true
+mode: api
+name: 钉钉群聊Webhook测试
+schedule: ''
+steps:
+- action: dingtalk_markdown
+  description: 群聊发Markdown消息
+  params:
+    text: 这是一条群聊Markdown消息。
+    title: 🚀 群聊测试
+  type: api
+- action: dingtalk_text
+  description: 群聊发纯文本消息
+  params:
+    message: 这是一条群聊纯文本消息。
+  type: api
