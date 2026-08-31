@@ -124,5 +124,12 @@
     "status": "success",
     "error": null,
     "elapsed_time": 2.94
+  },
+  {
+    "task_id": "test",
+    "timestamp": "2026-08-31T10:33:09.546737",
+    "status": "success",
+    "error": null,
+    "elapsed_time": 1.78
   }
 ]
