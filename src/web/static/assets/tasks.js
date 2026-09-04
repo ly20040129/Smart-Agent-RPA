@@ -161,10 +161,10 @@ function showParamsModal(task) {
             inp.id = 'param-' + p.key;
             inp.className = 'form-input';
             inp.placeholder = p.help || ('点击右侧按钮选择' + (p.type === 'file' ? '文件' : '目录'));
-            inp.readOnly = true;
+            inp.readOnly = false;
             var btn = document.createElement('button');
             btn.className = 'btn btn-sm';
-            btn.textContent = '浏览';
+            btn.textContent = '浏览…';
             btn.onclick = (function(key, isFile) {
                 return function() {
                     saveCurrentParamsValues();
@@ -256,119 +256,77 @@ function pickFile() {
 // ============================================================
 
 async function showFileBrowser(currentPath, dirOnly) {
-    if (dirOnly) {
-        // 选目录
-        const dirName = await pickDirectory();
-        if (dirName && fileBrowserCallback) {
-            fileBrowserCallback(dirName);
-            refreshParamsModal();
+    var url = API + '/api/files/browse';
+    if (currentPath) url += '?path=' + encodeURIComponent(currentPath);
+    try {
+        var res = await fetch(url, {headers: authHeaders()});
+        var data = await res.json();
+
+        var body = document.getElementById('params-modal-body');
+        body.innerHTML = '';
+
+        var titleDiv = document.createElement('div');
+        titleDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;';
+        var pathSpan = document.createElement('span');
+        pathSpan.style.cssText = 'font-size:13px;color:#666;';
+        pathSpan.textContent = data.current;
+        titleDiv.appendChild(pathSpan);
+
+        var btnGroup = document.createElement('div');
+        btnGroup.style.cssText = 'display:flex;gap:5px;';
+        var upBtn = document.createElement('button');
+        upBtn.className = 'btn btn-sm';
+        upBtn.textContent = '上级';
+        upBtn.onclick = function() { showFileBrowser(data.parent, dirOnly); };
+        btnGroup.appendChild(upBtn);
+        var selBtn = document.createElement('button');
+        selBtn.className = 'btn btn-sm btn-success';
+        selBtn.textContent = '选择此目录';
+        selBtn.onclick = function() { selectCurrentPath(data.current); };
+        btnGroup.appendChild(selBtn);
+        titleDiv.appendChild(btnGroup);
+        body.appendChild(titleDiv);
+
+        var listDiv = document.createElement('div');
+        listDiv.style.cssText = 'max-height:300px;overflow-y:auto;border:1px solid #eee;border-radius:6px;';
+
+        for (var i = 0; i < data.items.length; i++) {
+            var item = data.items[i];
+            var itemDiv = document.createElement('div');
+            itemDiv.style.cssText = 'padding:8px 12px;cursor:pointer;border-bottom:1px solid #f5f5f5;font-size:13px;';
+            itemDiv.onmouseover = function() { this.style.background = '#f0f8ff'; };
+            itemDiv.onmouseout = function() { this.style.background = ''; };
+
+            var icon = item.is_dir ? '📁 ' : '📄 ';
+            itemDiv.textContent = icon + item.name;
+
+            if (item.is_dir) {
+                itemDiv.onclick = (function(path, dOnly) {
+                    return function() { showFileBrowser(path, dOnly); };
+                })(item.path, dirOnly);
+            } else if (!dirOnly) {
+                itemDiv.onclick = (function(path) {
+                    return function() {
+                        if (fileBrowserCallback) fileBrowserCallback(path);
+                        restoreParamsModal();
+                    };
+                })(item.path);
+            } else {
+                itemDiv.style.opacity = '0.5';
+                itemDiv.style.cursor = 'default';
+            }
+            listDiv.appendChild(itemDiv);
         }
-    } else {
-        // 选文件
-        const fileName = await pickFile();
-        if (fileName && fileBrowserCallback) {
-            fileBrowserCallback(fileName);
-            refreshParamsModal();
-        }
+        body.appendChild(listDiv);
+
+        var backDiv = document.createElement('div');
+        backDiv.style.cssText = 'margin-top:10px;text-align:right;';
+        backDiv.innerHTML = '<button class="btn btn-warning btn-sm" onclick="closeParamsModal()">取消</button>';
+        body.appendChild(backDiv);
+    } catch(e) {
+        addLog('文件浏览失败: ' + e.message, 'error');
     }
 }
-
-// ============================================================
-// 辅助函数
-// ============================================================
-
-function refreshParamsModal() {
-    closeParamsModal();
-    if (_savedParamsTask) {
-        showParamsModal(_savedParamsTask);
-        for (var key in _savedParamsValues) {
-            var el = document.getElementById('param-' + key);
-            if (el) el.value = _savedParamsValues[key];
-        }
-    }
-}
-
-function closeParamsModal() {
-    document.getElementById('params-modal').style.display = 'none';
-    currentParamsTaskId = null;
-}
-
-function selectCurrentPath(path) {
-    if (fileBrowserCallback) fileBrowserCallback(path);
-    refreshParamsModal();
-}
-// async function showFileBrowser(currentPath, dirOnly) {
-//     var url = API + '/api/files/browse';
-//     if (currentPath) url += '?path=' + encodeURIComponent(currentPath);
-//     try {
-//         var res = await fetch(url, {headers: authHeaders()});
-//         var data = await res.json();
-
-//         var body = document.getElementById('params-modal-body');
-//         body.innerHTML = '';
-
-//         var titleDiv = document.createElement('div');
-//         titleDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;';
-//         var pathSpan = document.createElement('span');
-//         pathSpan.style.cssText = 'font-size:13px;color:#666;';
-//         pathSpan.textContent = data.current;
-//         titleDiv.appendChild(pathSpan);
-
-//         var btnGroup = document.createElement('div');
-//         btnGroup.style.cssText = 'display:flex;gap:5px;';
-//         var upBtn = document.createElement('button');
-//         upBtn.className = 'btn btn-sm';
-//         upBtn.textContent = '上级';
-//         upBtn.onclick = function() { showFileBrowser(data.parent, dirOnly); };
-//         btnGroup.appendChild(upBtn);
-//         var selBtn = document.createElement('button');
-//         selBtn.className = 'btn btn-sm btn-success';
-//         selBtn.textContent = '选择此目录';
-//         selBtn.onclick = function() { selectCurrentPath(data.current); };
-//         btnGroup.appendChild(selBtn);
-//         titleDiv.appendChild(btnGroup);
-//         body.appendChild(titleDiv);
-
-//         var listDiv = document.createElement('div');
-//         listDiv.style.cssText = 'max-height:300px;overflow-y:auto;border:1px solid #eee;border-radius:6px;';
-
-//         for (var i = 0; i < data.items.length; i++) {
-//             var item = data.items[i];
-//             var itemDiv = document.createElement('div');
-//             itemDiv.style.cssText = 'padding:8px 12px;cursor:pointer;border-bottom:1px solid #f5f5f5;font-size:13px;';
-//             itemDiv.onmouseover = function() { this.style.background = '#f0f8ff'; };
-//             itemDiv.onmouseout = function() { this.style.background = ''; };
-
-//             var icon = item.is_dir ? '📁 ' : '📄 ';
-//             itemDiv.textContent = icon + item.name;
-
-//             if (item.is_dir) {
-//                 itemDiv.onclick = (function(path, dOnly) {
-//                     return function() { showFileBrowser(path, dOnly); };
-//                 })(item.path, dirOnly);
-//             } else if (!dirOnly) {
-//                 itemDiv.onclick = (function(path) {
-//                     return function() {
-//                         if (fileBrowserCallback) fileBrowserCallback(path);
-//                         restoreParamsModal();
-//                     };
-//                 })(item.path);
-//             } else {
-//                 itemDiv.style.opacity = '0.5';
-//                 itemDiv.style.cursor = 'default';
-//             }
-//             listDiv.appendChild(itemDiv);
-//         }
-//         body.appendChild(listDiv);
-
-//         var backDiv = document.createElement('div');
-//         backDiv.style.cssText = 'margin-top:10px;text-align:right;';
-//         backDiv.innerHTML = '<button class="btn btn-warning btn-sm" onclick="closeParamsModal()">取消</button>';
-//         body.appendChild(backDiv);
-//     } catch(e) {
-//         addLog('文件浏览失败: ' + e.message, 'error');
-//     }
-// }
 
 function selectCurrentPath(path) {
     if (fileBrowserCallback) fileBrowserCallback(path);
