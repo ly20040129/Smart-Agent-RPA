@@ -1,20 +1,52 @@
+# =================================================================
+# 钉钉单聊自建机器人 
+# -----------------------------------------------------------------
+# dingtalk_userid 支持【两种写法，可混用】：
+#   写法 A：顶部写 1 次  → 所有步骤自动继承（99% 场景用这个）
+#   写法 B：某一步 params 单独写 → 覆盖全局（那一步发给不同人）
+#
+# 优先级：step.params.dingtalk_userid  >  顶部 dingtalk_userid
+# =================================================================
+
 department: admin
-description: 测试钉钉自建机器人单聊（delivery.dingtalk）：文字+Excel文件
+description: 钉钉单聊机器人完整模板（全局ID / step单独覆盖 / 文字 / Markdown / Excel文件）
+dingtalk_userid: '1783298686946923'
 enabled: true
 mode: api
-name: 钉钉单聊自建机器人测试
+name: 钉钉单聊自建机器人（完整版）
 schedule: ''
+
 steps:
-- action: send_oto_message
-  description: 单聊发文字通知
-  params:
-    dingtalk_userid: '1783298686946923'
-    message: 你好～马上给你发Excel。
-  type: api
-- action: run_workflow
-  description: 生成Excel并单聊发文件
-  params:
-    dingtalk_userid: '1783298686946923'
-    function: test_send_file
-    module: workflows.dingtalk_test
-  type: api
+  - action: send_oto_message
+    description: 单聊文字-用全局ID（不用在params里写dingtalk_userid）
+    type: api
+    params:
+      message: "Hi～这是通过【全局dingtalk_userid】直接发出的私聊文字。"
+
+  - action: send_oto_message
+    description: 单聊文字-step单独覆盖ID（优先级比全局高）
+    type: api
+    params:
+      dingtalk_userid: '1783298686946923'   
+      message: "Hi～这条是单独在 step.params 里写 dingtalk_userid 覆盖全局发出的。"
+
+  - action: send_oto_markdown
+    description: 单聊Markdown-用全局ID
+    type: api
+    params:
+      title: "📊 今日销售简报"
+      text: |
+        > **销售额**：¥ 1,234,567
+        > 
+        > **订单数**：128 单
+        > 
+        > 详情见下一条 Excel 文件。
+
+  - action: run_workflow
+    description: 生成Excel并单聊发文件（同样使用全局ID）
+    type: api
+    params:
+      module: workflows.dingtalk_test
+      function: test_send_file
+      # params里不用写dingtalk_userid，它会从全局继承
+      # 想临时换接收人时再补 dingtalk_userid: 'xxxx' 就行

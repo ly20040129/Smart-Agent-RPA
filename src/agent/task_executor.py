@@ -80,6 +80,15 @@ class TaskExecutor:
             context["username"] = username
             context["user_config"] = user_config
 
+        # yaml顶层全局默认：dingtalk_userid（单聊接收人）
+        # 优先级：step.params.dingtalk_userid > 顶层 dingtalk_userid / x-default-userid
+        _task_defaults = {"dingtalk_userid": (
+            task_config.get("dingtalk_userid")
+            or task_config.get("x-default-userid")
+            or ""
+        )}
+        context["_task_defaults"] = _task_defaults
+
         # 分布式锁粒度：job 级（没有 job_id 时退化到 task 级兜底）
         # 这样不同用户/不同提交不会互相阻塞；同一 job 在多实例/多 worker 场景下仍只执行一次
         lock_name = f"task:{task_id}:{job_id}" if job_id else f"task:{task_id}"
@@ -848,7 +857,8 @@ class TaskExecutor:
             
             channels = params.get("channels")
             task_name = params.get("task_name", "")
-            dingtalk_userid = params.get("dingtalk_userid")
+            defaults = (context or {}).get("_task_defaults", {}) or {}
+            dingtalk_userid = params.get("dingtalk_userid") or defaults.get("dingtalk_userid")
             result = await self.delivery_service.deliver(
                 file_path=file_path,
                 user_config=user_config,
@@ -921,9 +931,10 @@ class TaskExecutor:
 
             # --------- 自建应用单聊机器人 ---------
             if action in ("send_oto_message", "oto_text", "dingtalk_oto"):
-                userid = (params.get("dingtalk_userid") or "").strip()
+                defaults = (context or {}).get("_task_defaults", {}) or {}
+                userid = (params.get("dingtalk_userid") or defaults.get("dingtalk_userid") or "").strip()
                 if not userid:
-                    return {"status": "failed", "error": "缺少 dingtalk_userid。单聊通知必须指定接收人"}
+                    return {"status": "failed", "error": "缺少 dingtalk_userid（step.params 或 yaml 顶层 dingtalk_userid）"}
                 if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
                     return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
                 res = self._dingtalk_robot.send_text(content=message, userid=userid)
@@ -932,9 +943,10 @@ class TaskExecutor:
                 return {"status": "failed", "error": res.get("error", "钉钉单聊文本发送失败")}
 
             if action in ("send_oto_markdown", "oto_markdown"):
-                userid = (params.get("dingtalk_userid") or "").strip()
+                defaults = (context or {}).get("_task_defaults", {}) or {}
+                userid = (params.get("dingtalk_userid") or defaults.get("dingtalk_userid") or "").strip()
                 if not userid:
-                    return {"status": "failed", "error": "缺少 dingtalk_userid。单聊通知必须指定接收人"}
+                    return {"status": "failed", "error": "缺少 dingtalk_userid（step.params 或 yaml 顶层 dingtalk_userid）"}
                 if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
                     return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
                 title = params.get("title") or "通知"

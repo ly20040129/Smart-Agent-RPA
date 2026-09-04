@@ -8,7 +8,7 @@
 接收人：钉钉 userid（长得像一串数字，如 "1783298686946923"），在每个任务 yaml 的 params.dingtalk_userid 里写
 配置：config.yaml -> delivery.dingtalk 节点
 """
-import json
+import json 
 import os
 from typing import Dict, Optional
 from loguru import logger
