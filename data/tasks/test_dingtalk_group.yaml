@@ -1,0 +1,28 @@
+# 钉钉企业内部应用机器人：群聊文本 + 文件模板
+# 后续复用时，只需修改下面两个群聊参数。
+
+department: admin
+description: 向指定钉钉群发送文本，并生成测试 Excel 发送到群
+open_conversation_id: 'cidfK2IHgoF1CUKBAyD23eAOg=='
+robot_code: 'dinguyhemp2qmxc5qlxe'
+enabled: true
+mode: api
+name: 钉钉群聊消息与文件测试
+schedule: ''
+
+steps:
+  - action: send_group_message
+    description: 群聊发送文本
+    type: api
+    params:
+      # /v1.0/robot/groupMessages/send 暂不支持 @。
+      # 如需 @，应改用 SessionWebhook 或互动卡片。
+      message: "智能体平台：钉钉群聊文本测试成功。"
+
+  - action: run_workflow
+    description: 生成 Excel 并发送到群聊
+    type: api
+    params:
+      module: workflows.dingtalk_test
+      function: test_send_file
+      send_mode: group

@@ -48,5 +48,6 @@ steps:
     params:
       module: workflows.dingtalk_test
       function: test_send_file
+      dingtalk_userid: '1783298686946923'
       # params里不用写dingtalk_userid，它会从全局继承
       # 想临时换接收人时再补 dingtalk_userid: 'xxxx' 就行

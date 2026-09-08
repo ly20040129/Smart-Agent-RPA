@@ -1,7 +1,18 @@
-# 智能体自动化平台
+# Smart Agent RPA 🤖
 
-用自然语言描述操作步骤，自动完成网页操作、数据下载、数据清洗、入库和图表生成。
-主要场景：公众号账单下载、京东报表下载、天猫库存导出等重复性工作。
+**用自然语言描述操作步骤，自动完成网页操作、数据下载、数据清洗、入库和图表生成。**
+
+Smart Agent RPA 是一个基于 Python 的轻量级智能体自动化平台。它摒弃了传统 RPA 繁琐的流程编排，通过 **YAML 配置 + LLM 驱动** 的方式，让 AI 像人类一样理解页面元素并执行操作。主要场景：公众号账单下载、京东报表导出、天猫库存管理等重复性工作。
+
+---
+
+## ✨ 核心亮点
+
+*   **🧠 智能决策引擎 (LiteSmartBrowser)**：无需编写复杂的 CSS/XPath 选择器。AI 能够根据自然语言指令（如“点击登录按钮”）自主分析页面结构并精准定位元素。
+*   **⚡ 混合执行模式**：支持原子化步骤（导航、点击、填写）与自定义 Python 工作流（`workflows/`）无缝衔接，兼顾灵活性与稳定性。
+*   **🛡️ 工业级 Cookie 管理**：内置多平台（京东、拼多多、微信支付）Cookie 探活、去重预警及自动续期机制，确保 API 调用的长期有效性。
+*   **📊 全链路数据处理**：从浏览器/API 获取原始数据，到 Pandas 清洗、MySQL 存储，再到钉钉单聊/群聊自动交付，实现闭环。
+*   **🌐 零依赖前端**：原生 HTML/CSS/JS 构建的管理后台，无需 Node.js 环境，部署极简。
 
 ---
 
@@ -112,25 +123,93 @@ smart_agent_platform/
 
 ---
 
-## 快速开始
+## 🚀 快速开始
 
-### 1. 安装依赖
+### 1. 环境准备
+确保你已经安装了 **Python 3.10+**、**Redis** 和 **MySQL**。
+
+### 2. 安装依赖
 ```bash
+git clone https://github.com/your-username/smart-agent-rpa.git
+cd smart-agent-rpa
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. 配置
+### 3. 配置 LLM 与数据库
 编辑 `config/config.yaml`：
-- LLM：默认用智谱GLM-4-Flash（免费），填入API key
-- Redis：本地装了Redis默认配置就行
-- MySQL：填密码，数据库会自动创建
+*   **LLM**: 推荐使用智谱 GLM-4-Flash（性价比高），填入你的 API Key。
+*   **MySQL**: 填写数据库密码，程序启动时会自动创建所需的表结构。
 
-### 3. 启动
+### 4. 启动服务
 ```bash
 python start_web.py
 ```
-打开 http://127.0.0.1:8000 ，用 admin / admin123 登录。
+打开浏览器访问 `http://127.0.0.1:8000`，默认账号：`admin` / `admin123`。
+
+---
+
+## 💡 核心概念：一个任务是怎么跑起来的？
+
+Smart Agent RPA 采用 **"YAML 定义做什么，Python 实现怎么做"** 的设计哲学。
+
+| 文件类型 | 作用 | 类比 |
+| :--- | :--- | :--- |
+| `data/tasks/*.yaml` | 任务配置（步骤、参数、描述） | **菜谱** |
+| `workflows/*.py` | 浏览器/API 自动化逻辑 | **厨师做菜** |
+| `data_clean/*.py` | 数据清洗与格式化 | **摆盘装饰** |
+
+### 执行流程
+```mermaid
+graph TD
+    A[用户点击执行] --> B(TaskExecutor 读取 YAML)
+    B --> C{步骤类型}
+    C -->|browser| D[LiteSmartBrowser 智能操作]
+    C -->|api| E[调用 workflows 脚本]
+    C -->|data| F[Pandas 数据清洗]
+    D & E & F --> G[钉钉/本地交付]
+```
+
+---
+
+## 🛠️ 进阶功能
+
+### 1. 智能浏览器 (LiteSmartBrowser)
+不再需要维护脆弱的 CSS 选择器。你只需要告诉 AI 你的意图：
+```yaml
+- action: click
+  params:
+    intent: "点击左侧菜单中的‘实销实结明细’"
+```
+
+### 2. 工业级 Cookie 管理
+内置了针对京东、拼多多、微信支付的 **Cookie 探活与自动续期机制**。即使 Cookie 即将过期，系统也会通过后台探针自动刷新，确保持久化运行。
+
+### 3. 钉钉机器人集成
+支持群聊 Webhook 通知和单聊自建应用发文件。在 YAML 中轻松配置：
+```yaml
+- action: deliver_file
+  params:
+    channels: [dingtalk, local]
+    dingtalk_userid: "你的钉钉ID"
+```
+
+---
+
+## 🤝 参与贡献
+
+我们欢迎任何形式的贡献！
+1. **Fork** 本仓库。
+2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)。
+3. 提交你的改动 (`git commit -m 'Add some AmazingFeature'`)。
+4. 推送到分支 (`git push origin feature/AmazingFeature`)。
+5. 开启一个 **Pull Request**。
+
+---
+
+## 📄 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。
 
 ---
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""钉钉测试 workflow：生成Excel + 单聊发给 dingtalk_userid"""
-import sys, asyncio
+"""钉钉测试 workflow：生成 Excel，并按 single/group 模式发送。"""
+import sys
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
@@ -14,8 +14,16 @@ from loguru import logger
 
 
 async def test_send_file(**kwargs):
+    send_mode = (kwargs.get("send_mode") or "single").strip().lower()
     userid = (kwargs.get("dingtalk_userid") or "").strip()
-    if not userid:
+    open_conversation_id = (kwargs.get("open_conversation_id") or "").strip()
+    robot_code = (kwargs.get("robot_code") or "").strip()
+    if send_mode == "group":
+        if not open_conversation_id:
+            return {"status": "failed", "error": "缺少 open_conversation_id"}
+        if not robot_code:
+            return {"status": "failed", "error": "缺少 robot_code"}
+    elif not userid:
         return {"status": "failed", "error": "缺少 dingtalk_userid"}
 
     # 1) 生成测试Excel
@@ -29,20 +37,20 @@ async def test_send_file(**kwargs):
     }).to_excel(str(file), index=False)
     logger.info(f"生成文件: {file}")
 
-    # 2) 单聊发钉钉（config.yaml里的delivery.dingtalk会被DeliveryService自己读取）
-    res = await DeliveryService().deliver(
-        file_path=str(file),
-        user_config={},
-        task_name="钉钉测试",
-        channels=["dingtalk"],
-        dingtalk_userid=userid,
-    )
-    return {"file": str(file), "result": res}
-
-
-if __name__ == "__main__":
-    USERID = ""   # 本地调试时填自己的 userid
-    if USERID:
-        asyncio.run(test_send_file(dingtalk_userid=USERID))
+    # 2) 按模式发送：默认保持原单聊；group 模式复用同一文件生成逻辑发送到群
+    if send_mode == "group":
+        from src.agent.dingtalk_robot import build_robot
+        res = build_robot().send_group_file(
+            file_path=str(file),
+            open_conversation_id=open_conversation_id,
+            robot_code=robot_code,
+        )
     else:
-        print("先在 __main__ 里填 USERID，或直接跑Web任务")
+        res = await DeliveryService().deliver(
+            file_path=str(file),
+            user_config={},
+            task_name="钉钉测试",
+            channels=["dingtalk"],
+            dingtalk_userid=userid,
+        )
+    return {"file": str(file), "result": res}

@@ -61,3 +61,11 @@ bcrypt>=4.0
 uiautomation>=2.0.0
 # opencv-python: 图像识别（控件截图匹配，应对无控件树的古老应用）
 opencv-python>=4.8.0
+
+# ====== 自然语言浏览器自动化（browser-use）======
+# 用自然语言描述任务，AI 自动找元素操作浏览器
+browser-use>=0.1.0
+
+# ====== 智能修复 LLM+工具循环（LangGraph）======
+# StateGraph 构建 ReAct 循环，让 LLM 调工具真正修 bug
+langgraph>=0.2.0
