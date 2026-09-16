@@ -5,105 +5,105 @@ browser-use 封装 - 用自然语言驱动浏览器自动化
 用法：
     agent = BrowserUseAgent()
     result = await agent.run(task="登录京东后导出昨天的销售报表到 data/output/")
-    print(result)  # AI执行的结果
-
-说明：
-  - 内部用 browser-use 的 Agent 类，AI 自己找元素操作
-  - LLM 优先复用项目的 LocalLLMClient（通过适配器转成 langchain 接口）
-  - headless=False，用户能看到浏览器操作过程
-  - 若未安装 browser-use，会给出友好提示而不是抛异常
+    print(result)
 """
+import random
 from typing import Optional
 from loguru import logger
 
 from src.core.llm_client import LocalLLMClient
+from src.core.config import get_config
+from browser_use import Browser, BrowserProfile
 
-# 延迟导入 browser-use，没装也不影响其它模块
 try:
-    from browser_use import Agent, Browser, BrowserConfig  # type: ignore
+    from browser_use import Agent, Browser, ChatOpenAI
     _BROWSER_USE_AVAILABLE = True
 except ImportError:
     _BROWSER_USE_AVAILABLE = False
 
 
-class BrowserUseLLMAdapter:
-    """
-    把项目的 LocalLLMClient 适配成 browser-use 期望的 langchain ChatModel 接口。
-
-    browser-use 内部会调用 llm.ainvoke(messages)，messages 是 langchain 的
-    BaseMessage 列表（Human/AIMessage/SystemMessage 等），返回值需要是 AIMessage。
-    这里做一层格式转换，把 langchain 消息转成 LocalLLMClient 认识的
-    {"role", "content"} 列表，再调 backend.ainvoke。
-    """
-
-    def __init__(self, llm: LocalLLMClient):
-        self._llm = llm
-
-    def _to_dict_list(self, messages) -> list:
-        from langchain_core.messages import HumanMessage, SystemMessage, AIMessage  # type: ignore
-
-        result = []
-        for m in messages:
-            if isinstance(m, SystemMessage):
-                result.append({"role": "system", "content": m.content})
-            elif isinstance(m, AIMessage):
-                result.append({"role": "assistant", "content": m.content})
-            else:
-                # HumanMessage 及其它一律按 user 处理
-                result.append({"role": "user", "content": getattr(m, "content", str(m))})
-        return result
-
-    async def ainvoke(self, messages, **kwargs):
-        from langchain_core.messages import AIMessage  # type: ignore
-
-        dict_msgs = self._to_dict_list(messages)
-        content = await self._llm.backend.ainvoke(dict_msgs)
-        return AIMessage(content=content)
-
-    def invoke(self, messages, **kwargs):
-        import asyncio
-        return asyncio.run(self.ainvoke(messages, **kwargs))
-
-
 class BrowserUseAgent:
     """browser-use 薄封装：用自然语言描述任务，AI 自动操作浏览器"""
 
+    # 拟人化：随机UA + 随机窗口 + 反自动化参数（借鉴旧项目 rpaTools）
+    _USER_AGENTS = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    ]
+    _HUMAN_ARGS = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--lang=zh-CN",
+    ]
+
     def __init__(self, llm: Optional[LocalLLMClient] = None):
         self.llm = llm or LocalLLMClient()
+        self.config = get_config()
+        self._browser = None
+
+    def _humanize_profile(self) -> dict:
+        """生成随机窗口、UA、反自动化参数，降低被识别为机器人的概率"""
+        return {
+            "user_agent": random.choice(self._USER_AGENTS),
+            "window_size": {
+                "width": random.randint(1280, 1920),
+                "height": random.randint(720, 1080),
+            },
+            "args": list(self._HUMAN_ARGS),
+            "headers": {"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+        }
+
+    async def _get_or_create_browser(self, headless: bool = False):
+        if self._browser is None:
+            profile_kwargs = self._humanize_profile()
+            profile_kwargs.update(enable_default_extensions=False, headless=headless)
+            self._browser = Browser(browser_profile=BrowserProfile(**profile_kwargs))
+        return self._browser
+
+    def _build_browser_llm(self):
+        """根据当前 provider 构造 browser-use 能用的 ChatOpenAI"""
+        provider = self.llm.provider
+
+        if provider == "zhipuai":
+            # 智谱的 OpenAI 兼容接口
+            return ChatOpenAI(
+                model=self.config.llm.zhipuai_model,
+                api_key=self.config.llm.zhipuai_api_key,
+                base_url="https://open.bigmodel.cn/api/paas/v4",
+            )
+        elif provider == "deepseek":
+            return ChatOpenAI(
+                model=self.config.llm.deepseek_model,
+                api_key=self.config.llm.deepseek_api_key,
+                base_url=self.config.llm.deepseek_base_url,
+            )
+        else:
+            raise ValueError(f"browser-use 暂不支持 {provider}，请切换为 zhipuai 或 deepseek")
 
     async def run(self, task: str, initial_url: str = None, **kwargs) -> str:
-        """
-        执行自然语言浏览器任务
-
-        Args:
-            task: 自然语言描述的任务，例如 "打开百度搜索天气"
-            initial_url: 起始 URL（可选）
-            **kwargs: 透传给 browser-use Agent 的额外参数
-
-        Returns:
-            AI 执行结果文本
-        """
         if not _BROWSER_USE_AVAILABLE:
-            hint = (
-                "未安装 browser-use，请先执行: pip install browser-use>=0.1.0\n"
-                "安装后即可用自然语言描述浏览器任务，AI 自动操作。"
-            )
+            hint = "未安装 browser-use，请先执行: pip install browser-use"
             logger.warning(hint)
             return hint
 
         try:
-            # headless=False 让用户能看到浏览器
-            browser = Browser(config=BrowserConfig(headless=False))
+            browser = await self._get_or_create_browser(headless=False)
+            llm = self._build_browser_llm()
+
             agent = Agent(
                 task=task,
-                llm=BrowserUseLLMAdapter(self.llm),
+                llm=llm,
                 browser=browser,
                 initial_url=initial_url,
                 **kwargs,
             )
             result = await agent.run()
 
-            # browser-use 的 run 返回 AgentOutput，用 final_result() 取最终文本
             try:
                 return result.final_result()
             except Exception:

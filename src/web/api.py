@@ -43,6 +43,20 @@ async def _init_registries():
     init_entities()
     init_platforms()
 
+    # 启动持久化调度器（借鉴 bull.ts：重启后自动恢复定时任务）
+    from src.agent.scheduler import TaskScheduler
+    app.state.scheduler = TaskScheduler()
+    await app.state.scheduler.start()
+    logger.info("持久化调度器已启动")
+
+
+@app.on_event("shutdown")
+async def _shutdown_scheduler():
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler:
+        await scheduler.stop()
+        logger.info("持久化调度器已停止")
+
 # ==================== 中间件 ====================
 app.add_middleware(
     CORSMiddleware,
@@ -444,6 +458,27 @@ async def get_history(task_id: str, user: dict = Depends(require_auth)):
     """获取任务执行历史"""
     history = task_manager.get_history(task_id)
     return {"history": history}
+
+
+# ==================== 调度管理 API ====================
+@app.get("/api/schedules")
+async def list_schedules(user: dict = Depends(require_auth)):
+    """列出所有定时调度"""
+    scheduler = getattr(app.state, "scheduler", None)
+    if not scheduler:
+        return {"schedules": []}
+    return {"schedules": scheduler.list_schedules()}
+
+@app.post("/api/schedules/{task_id}/refresh")
+async def refresh_schedule(task_id: str, user: dict = Depends(require_auth)):
+    """手动刷新某个任务的调度（改了 cron 后调用）"""
+    scheduler = getattr(app.state, "scheduler", None)
+    if not scheduler:
+        raise HTTPException(503, "调度器未启动")
+    ok = scheduler.register_one(task_id)
+    if not ok:
+        raise HTTPException(400, f"任务 {task_id} 调度注册失败（检查 cron 表达式）")
+    return {"status": "ok", "task_id": task_id}
 
 
 # ==================== 任务队列 API ====================

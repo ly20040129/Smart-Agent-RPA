@@ -1,0 +1,10 @@
+name: "搜索天气测试"
+description: "browser-use 搜索天气"
+mode: api
+
+steps:
+  - type: browser
+    action: browser_use
+    params:
+      url: "https://www.baidu.com"
+      task: "搜索'今天北京天气'，返回第一条结果"

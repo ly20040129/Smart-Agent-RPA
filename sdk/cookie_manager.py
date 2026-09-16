@@ -378,6 +378,40 @@ class CookieManager:
         """cookie存在且有登录态"""
         return self.is_valid(key) and self.is_logged_in(key)
 
+    # ---- 使用锁（借鉴旧项目 cookieUse：同一账号同时只允许一个任务使用）----
+
+    _USE_LOCK_PREFIX = "cookie_use:"
+    _USE_OWNER_PREFIX = "cookie_use_owner:"
+
+    def acquire_use(self, key: str, owner: str, timeout: int = 3600) -> bool:
+        """占用某账号的cookie，防止并发使用同一账号。owner 一般传 task_id/job_id。"""
+        if not storage_manager.is_redis_available:
+            return True
+        if not storage_manager.acquire_lock(self._USE_LOCK_PREFIX + key, timeout):
+            current = self.current_user(key)
+            logger.warning(f"[Cookie] {key}: 正被 {current or '其他任务'} 使用，{owner} 等待中")
+            return False
+        storage_manager.redis.set(self._USE_OWNER_PREFIX + key, owner, expire=timeout)
+        logger.info(f"[Cookie] {key}: 已分配使用锁给 {owner}")
+        return True
+
+    def release_use(self, key: str, owner: str) -> bool:
+        """释放账号使用锁，仅当前占用者可释放"""
+        if not storage_manager.is_redis_available:
+            return True
+        current = self.current_user(key)
+        if current and current != owner:
+            logger.warning(f"[Cookie] {key}: 使用锁属于 {current}，{owner} 无权释放")
+            return False
+        storage_manager.redis.delete(self._USE_OWNER_PREFIX + key)
+        return storage_manager.release_lock(self._USE_LOCK_PREFIX + key)
+
+    def current_user(self, key: str) -> str:
+        """当前占用该账号的任务"""
+        if not storage_manager.is_redis_available:
+            return ""
+        return storage_manager.redis.get(self._USE_OWNER_PREFIX + key, "") or ""
+
     # ---- 内部方法 ----
 
     def _save_to_redis(self, key: str, cookies: List[Dict], expire_days: int = 30) -> bool:

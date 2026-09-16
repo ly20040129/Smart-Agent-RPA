@@ -1,156 +1,98 @@
 # -*- coding: utf-8 -*-
 """
-任务执行器 - 读取任务配置，按步骤执行
+任务执行器（编排层）
 
-这是连接"任务配置"和"智能执行"的桥梁：
-  配置: 步骤1 打开URL → 步骤2 扫码登录 → 步骤3 点击下载 → 步骤4 处理数据
-  执行: SmartBrowser.navigate → SmartBrowser.smart_login → SmartBrowser.smart_download → SmartDataProcessor.process_excel
+只负责「加载任务 → 加锁 → 循环步骤 → 自修复 → 存历史 → 成败通知」。
+各步骤类型的动作实现都在 src/agent/steps/ 下，通过 STEP_HANDLERS 注册表分发，
+避免把所有逻辑堆在单个方法里。
 """
 import asyncio
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from loguru import logger
 
-from src.agent.smart_browser import SmartBrowser
-from src.agent.smart_data_processor import SmartDataProcessor
-from src.agent.task_manager import TaskManager
-from src.agent.dingtalk_webhook import DingtalkWebhook, build_webhook
-from src.agent.dingtalk_robot import DingtalkRobot, build_robot
-from src.storage import storage_manager
-from src.core.config import get_config
 from src.agent.delivery_service import DeliveryService
+from src.agent.notifier import Notifier, build_notifier
+from src.agent.smart_data_processor import SmartDataProcessor
+from src.agent.steps import STEP_HANDLERS
+from src.agent.steps.base import resolve_placeholders
+from src.agent.task_manager import TaskManager
 from src.agent.template_manager import TemplateManager
+from src.core.config import get_config
+from src.storage import storage_manager
 
 
 class TaskExecutor:
-    """
-    任务执行器
-
-    根据任务配置中的步骤，调用对应的智能模块执行
-    """
+    """任务执行器（编排层）"""
 
     def __init__(self):
-        self.smart_browser: Optional[SmartBrowser] = None
-        self.smart_desktop = None  # 智能桌面自动化（按需初始化）
+        self.browser_agent = None
+        self.smart_desktop = None
         self.data_processor = SmartDataProcessor()
         self.task_manager = TaskManager()
         self.delivery_service = DeliveryService()
         self.template_manager = TemplateManager()
-        self.recovery = None  # 智能异常自修复（按需初始化）
+        self.recovery = None
         self._current_user = None
-        self._dingtalk: Optional[DingtalkWebhook] = None  # 群聊Webhook（通用通知/告警）
-        self._dingtalk_robot: Optional[DingtalkRobot] = None  # 单聊自建应用（给具体人发消息/文件）
+        self.notifier: Optional[Notifier] = None
+
+    def set_user(self, user_info: Dict):
+        self._current_user = user_info
 
     async def execute_task(self, task_id: str, user_params: Dict = None, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        执行指定任务
-
-        Args:
-            task_id: 任务ID
-            user_params: 用户自定义参数
-            job_id:  队列层的 job_id，用于把 Redis 锁从 task 级降到 job 级；
-                    不同用户/不同 job 之间不再互相阻塞，仅防止“同一次 job 被多实例重复执行”
-
-        Returns:
-            执行结果
-        """
-        # 获取任务配置
         task_config = self.task_manager.get_task(task_id)
         if not task_config:
             return {"status": "failed", "error": f"任务不存在: {task_id}"}
-
         if not task_config.get("enabled", True):
             return {"status": "failed", "error": "任务已禁用"}
 
         user_config = self._current_user.get("config", {}) if self._current_user else {}
-        self._dingtalk = build_webhook(user_config=user_config, task_config=task_config)
-        self._dingtalk_robot = build_robot(user_config=user_config)
         username = self._current_user.get("username", "") if self._current_user else ""
+        self.notifier = build_notifier(task_config=task_config, user_config=user_config)
 
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"开始执行任务: {task_config.get('name', task_id)} (job={job_id or 'direct'})")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
 
         start_time = time.time()
-        context = {}  # 步骤间共享数据
-        if user_params:
-            context["user_params"] = user_params
-        # 设置用户信息用于交付步骤
-        if self._current_user:
-            context["username"] = username
-            context["user_config"] = user_config
-
-        # yaml顶层全局默认：dingtalk_userid（单聊接收人）
-        # 优先级：step.params.dingtalk_userid > 顶层 dingtalk_userid / x-default-userid
-        _task_defaults = {"dingtalk_userid": (
-            task_config.get("dingtalk_userid")
-            or task_config.get("x-default-userid")
-            or ""
-        )}
-        context["_task_defaults"] = _task_defaults
-
-        # 分布式锁粒度：job 级（没有 job_id 时退化到 task 级兜底）
-        # 这样不同用户/不同提交不会互相阻塞；同一 job 在多实例/多 worker 场景下仍只执行一次
+        steps = task_config.get("steps", [])
+        context = self._build_context(task_id, task_config, user_params, username, user_config)
         lock_name = f"task:{task_id}:{job_id}" if job_id else f"task:{task_id}"
         lock_acquired = False
-
-        # 任务开始通知（钉钉）
-        try:
-            if self._dingtalk and self._dingtalk.enabled:
-                self._dingtalk.notify_task_started(
-                    task_name=task_config.get("name", task_id),
-                    username=username,
-                )
-        except Exception as _e:
-            logger.warning(f"钉钉[开始]通知发送失败，不影响执行: {_e}")
-
-        # 最终执行结果（兜底：未执行到 return 就视为失败）
+        cookie_key = task_config.get("cookie_key", "")
+        cookie_use_owner = job_id or task_id
+        cookie_use_acquired = False
         result: Dict[str, Any] = {"status": "failed", "error": "任务未正常结束"}
-        # 任务失败时用于钉钉通知 / 落库的错误信息字符串（独立于 except 变量 e，避免 finally 里未绑定）
         fail_reason: Optional[str] = None
 
+        self._notify_start(task_config, username)
+
         try:
-            steps = task_config.get("steps", [])
-
-            # 设置cookie持久化（仅当任务包含浏览器步骤时）
-            has_browser_step = any(s.get('type') == 'browser' for s in steps)
-            if has_browser_step and storage_manager.is_redis_available:
-                config = get_config()
-                cookie_domains = config.storage.get('browser_persistence', {}).get('cookie_domains', {})
-                task_name = task_config.get('name', task_id)
-                cookie_domain = cookie_domains.get(task_name)
-                if cookie_domain and self.smart_browser:
-                    self.smart_browser.browser.set_cookie_domain(cookie_domain)
-
-            # 获取分布式锁：同一次 job 仅允许被执行一次（多机/多进程部署的兜底）
             if storage_manager.is_redis_available:
-                if storage_manager.acquire_lock(lock_name, timeout=3600):
-                    logger.info(f"已获取任务锁: {lock_name}")
-                    lock_acquired = True
-                else:
-                    # 这里不再“强制清理锁”——因为现在的粒度是 job 级，真被占用说明同 job 正在跑，直接返回即可
-                    logger.warning(f"任务锁被占用（同job正在执行）: {lock_name}")
+                if not storage_manager.acquire_lock(lock_name, timeout=3600):
                     fail_reason = "相同任务正在执行中，请稍后重试"
                     result = {"status": "failed", "error": fail_reason}
                     return result
+                lock_acquired = True
+
+            # cookie 账号使用锁：同一账号同时只允许一个任务使用
+            if cookie_key:
+                from sdk.cookie_manager import cookie_manager
+                if not cookie_manager.acquire_use(cookie_key, cookie_use_owner):
+                    fail_reason = f"Cookie账号 {cookie_key} 正被其他任务使用"
+                    result = {"status": "failed", "error": fail_reason}
+                    return result
+                cookie_use_acquired = True
 
             for i, step in enumerate(steps):
-                logger.info(f"--- 步骤 {i+1}/{len(steps)}: {step.get('description', '')} ---")
-
+                logger.info(f"--- 步骤 {i + 1}/{len(steps)}: {step.get('description', '')} ---")
                 step_result = await self._execute_step(step, context)
-
-                # 步骤失败时尝试智能自修复
                 if step_result.get("status") == "failed":
-                    error_msg = step_result.get("error", "未知错误")
-                    logger.warning(f"步骤 {i+1} 失败: {error_msg}")
-
-                    # 尝试自动修复并重试
                     step_result = await self._retry_with_recovery(
-                        task_id, i + 1, step, context, error_msg
-                    )
-
+                        task_id, i + 1, step, context, step_result.get("error", "未知错误"))
                     if step_result.get("status") == "failed":
-                        fail_reason = f"步骤{i+1}失败: {step_result.get('error')}"
+                        fail_reason = f"步骤{i + 1}失败: {step_result.get('error')}"
                         result = {
                             "status": "failed",
                             "error": fail_reason,
@@ -159,143 +101,143 @@ class TaskExecutor:
                             "recovery_diagnosis": step_result.get("recovery_diagnosis", ""),
                         }
                         self.task_manager.save_history(task_id, result)
-                        # 注意：这里的 return 会跳出整个 try，交给外层 finally 统一释放锁
                         return result
-
-                # 保存步骤结果到上下文
                 context.update(step_result.get("context", {}))
+                logger.info(f"步骤 {i + 1} 完成")
 
-                logger.info(f"步骤 {i+1} 完成")
-
-            # 关闭浏览器
-            if self.smart_browser:
-                await self.smart_browser.close()
-            # 关闭桌面自动化
-            if self.smart_desktop:
-                self.smart_desktop.close()
-                self.smart_desktop = None
-
+            self._close_desktop()
             elapsed = time.time() - start_time
-            output_file = (
-                context.get("processed_file")
-                or context.get("downloaded_file")
-                or context.get("api_output_file")
-                or ""
-            )
+            output_file = (context.get("processed_file") or context.get("downloaded_file")
+                           or context.get("api_output_file") or "")
             result = {
                 "status": "success",
                 "task_id": task_id,
                 "task_name": task_config.get("name"),
                 "elapsed_time": round(elapsed, 2),
                 "output_file": output_file,
-                "context": {k: v for k, v in context.items() if not callable(v)}
+                "context": {k: v for k, v in context.items() if not callable(v)},
             }
-
             self.task_manager.save_history(task_id, result)
-
-            # 保存到MySQL（锁由外层 finally 统一兜底释放）
-            if storage_manager.is_redis_available:
-                storage_manager.save_task_history(
-                    task_id=task_id,
-                    task_name=task_config.get('name', ''),
-                    status='success',
-                    elapsed_time=f"{elapsed:.1f}秒",
-                    steps_total=len(steps),
-                    steps_completed=len(steps),
-                    context={k: str(v) for k, v in context.items() if not callable(v)}
-                )
-
-            # 任务成功通知（钉钉）
-            try:
-                if self._dingtalk and self._dingtalk.enabled:
-                    self._dingtalk.notify_task_success(
-                        task_name=task_config.get("name", task_id),
-                        elapsed_sec=round(elapsed, 1),
-                        username=username,
-                        file_path=output_file,
-                    )
-            except Exception as _e:
-                logger.warning(f"钉钉[成功]通知发送失败，不影响执行: {_e}")
-
+            self._save_history(task_id, task_config, "success", elapsed, len(steps), len(steps), context)
+            self._notify_success(task_config, username, elapsed, output_file)
             logger.info(f"✅ 任务执行成功，耗时 {elapsed:.1f}秒")
             return result
 
         except Exception as e:
             fail_reason = str(e)
             logger.error(f"任务执行异常: {fail_reason}")
-            if self.smart_browser:
-                await self.smart_browser.close()
-            if self.smart_desktop:
-                try:
-                    self.smart_desktop.close()
-                except Exception:
-                    pass
-                self.smart_desktop = None
-
+            self._close_desktop()
             result = {"status": "failed", "error": fail_reason}
             self.task_manager.save_history(task_id, result)
+            self._save_history(task_id, task_config, "failed", time.time() - start_time, error=fail_reason)
 
-            # 保存失败记录到MySQL
-            if storage_manager.is_redis_available:
-                storage_manager.save_task_history(
-                    task_id=task_id,
-                    task_name=task_config.get('name', ''),
-                    status='failed',
-                    elapsed_time=f"{time.time() - start_time:.1f}秒",
-                    error_message=fail_reason
-                )
         finally:
-            # 统一兜底释放锁：获取过就释放，防止上面各种 return/异常路径漏掉
-            # 注意：finally 里只做清理，不 return——否则会吞掉 try/except 里未捕获的异常
+            if cookie_use_acquired:
+                try:
+                    from sdk.cookie_manager import cookie_manager
+                    cookie_manager.release_use(cookie_key, cookie_use_owner)
+                except Exception as _ce:
+                    logger.warning(f"释放Cookie使用锁失败(不影响业务): {cookie_key} err={_ce}")
             if storage_manager.is_redis_available and lock_acquired:
                 try:
                     storage_manager.release_lock(lock_name)
                 except Exception as _le:
                     logger.warning(f"释放任务锁失败(不影响业务): {lock_name} err={_le}")
-
-            # 任务失败通知（钉钉）- 失败会 @all（这里统一用 fail_reason，不再依赖 except 里的局部变量 e）
             if result.get("status") != "success" and (fail_reason or result.get("error")):
-                try:
-                    if self._dingtalk and self._dingtalk.enabled:
-                        self._dingtalk.notify_task_failed(
-                            task_name=task_config.get("name", task_id),
-                            error=fail_reason or str(result.get("error", "")),
-                            username=username,
-                        )
-                except Exception as _e:
-                    logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {_e}")
+                self._notify_failed(task_config, username, fail_reason or str(result.get("error", "")))
 
         return result
 
-    def _resolve_params_placeholders(self, params: Any, context: Dict) -> Any:
-        """
-        递归替换参数中的 ${param} 占位符为用户输入的值
-        支持 dict、list、str 嵌套结构
-        """
-        import re
-        if not params:
-            return params
-        user_params = context.get('user_params', {}) if context else {}
+    # ==================== 执行上下文 ====================
 
-        def _sub(s: str) -> str:
-            if not isinstance(s, str):
-                return s
-            def _m(mo):
-                k = mo.group(1)
-                return str(user_params[k]) if k in user_params else mo.group(0)
-            return re.sub(r'\$\{(\w+)\}', _m, s)
+    def _build_context(self, task_id: str, task_config: Dict, user_params: Dict, username: str, user_config: Dict) -> Dict:
+        context: Dict[str, Any] = {}
+        if user_params:
+            context["user_params"] = user_params
+        if self._current_user:
+            context["username"] = username
+            context["user_config"] = user_config
+        context["_task_defaults"] = {
+            "dingtalk_userid": task_config.get("dingtalk_userid") or task_config.get("x-default-userid") or ""
+        }
+        self._attach_cookie_domain(task_id, task_config, context)
+        return context
 
-        if isinstance(params, dict):
-            return {k: self._resolve_params_placeholders(v, context) for k, v in params.items()}
-        elif isinstance(params, list):
-            return [self._resolve_params_placeholders(v, context) for v in params]
-        elif isinstance(params, str):
-            return _sub(params)
-        else:
-            return params
+    def _attach_cookie_domain(self, task_id: str, task_config: Dict, context: Dict) -> None:
+        if not (storage_manager.is_redis_available
+                and any(s.get("type") == "browser" for s in task_config.get("steps", []))):
+            return
+        config = get_config()
+        cookie_domains = config.storage.get("browser_persistence", {}).get("cookie_domains", {})
+        cookie_domain = cookie_domains.get(task_config.get("name", task_id))
+        if cookie_domain:
+            context["cookie_domain"] = cookie_domain
+
+    # ==================== 通知 ====================
+
+    def _notify_start(self, task_config: Dict, username: str) -> None:
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.notifier.notify_task_started(task_name=task_config.get("name", ""), username=username)
+        except Exception as e:
+            logger.warning(f"钉钉[开始]通知发送失败，不影响执行: {e}")
+
+    def _notify_success(self, task_config: Dict, username: str, elapsed: float, output_file: str) -> None:
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.notifier.notify_task_success(
+                    task_name=task_config.get("name", ""),
+                    elapsed_sec=round(elapsed, 1),
+                    username=username,
+                    file_path=output_file,
+                )
+        except Exception as e:
+            logger.warning(f"钉钉[成功]通知发送失败，不影响执行: {e}")
+
+    def _notify_failed(self, task_config: Dict, username: str, error: str) -> None:
+        try:
+            if self.notifier and self.notifier.enabled:
+                self.notifier.notify_task_failed(task_name=task_config.get("name", ""), error=error, username=username)
+        except Exception as e:
+            logger.warning(f"钉钉[失败]通知发送失败，不影响执行: {e}")
+
+    # ==================== 历史落库 ====================
+
+    def _save_history(self, task_id: str, task_config: Dict, status: str, elapsed: float,
+                      steps_total: int = 0, steps_completed: int = 0,
+                      context: Optional[Dict] = None, error: Optional[str] = None) -> None:
+        storage_manager.save_task_history(
+            task_id=task_id,
+            task_name=task_config.get("name", ""),
+            status=status,
+            elapsed_time=f"{elapsed:.1f}秒",
+            steps_total=steps_total,
+            steps_completed=steps_completed,
+            context={k: str(v) for k, v in (context or {}).items() if not callable(v)} if context else None,
+            error_message=error,
+        )
+
+    def _close_desktop(self) -> None:
+        if self.smart_desktop:
+            try:
+                self.smart_desktop.close()
+            except Exception:
+                pass
+            self.smart_desktop = None
+
+    # ==================== 步骤分发与自修复 ====================
+
+    async def _execute_step(self, step: Dict, context: Dict) -> Dict[str, Any]:
+        step_type = step.get("type")
+        action = step.get("action")
+        params = resolve_placeholders(step.get("params", {}), context)
+        handler = STEP_HANDLERS.get(step_type)
+        if not handler:
+            return {"status": "failed", "error": f"未知步骤类型: {step_type}"}
+        logger.info(f"  类型: {step_type}, 动作: {action}")
+        return await handler(self, action, params, context)
 
     def _get_recovery(self):
-        """懒加载智能异常自修复模块"""
         if not self.recovery:
             try:
                 from src.agent.smart_recovery import SmartRecovery
@@ -304,40 +246,16 @@ class TaskExecutor:
                 logger.warning(f"异常自修复模块加载失败: {e}")
         return self.recovery
 
-    async def _retry_with_recovery(
-        self,
-        task_id: str,
-        step_index: int,
-        step: Dict,
-        context: Dict,
-        error_msg: str,
-    ) -> Dict[str, Any]:
-        """
-        智能自修复重试
-
-        流程：
-        1. 调用 SmartRecovery 分析错误
-        2. 如果可重试，按策略修正后重试
-        3. 记录修复日志
-        """
+    async def _retry_with_recovery(self, task_id: str, step_index: int, step: Dict,
+                                   context: Dict, error_msg: str) -> Dict[str, Any]:
         recovery = self._get_recovery()
         if not recovery:
-            return {
-                "status": "failed",
-                "error": error_msg,
-                "recovery_attempted": False,
-            }
+            return {"status": "failed", "error": error_msg, "recovery_attempted": False}
 
-        # 分析错误
         strategy = recovery.analyze_error(error_msg, step, context)
-
-        logger.info(
-            f"[Recovery] 诊断结果: {strategy.diagnosis} | "
-            f"可重试: {strategy.should_retry} | 需人工: {strategy.need_human}"
-        )
+        logger.info(f"[Recovery] 诊断: {strategy.diagnosis} | 可重试: {strategy.should_retry}")
 
         if not strategy.should_retry:
-            # 不可自动修复
             recovery.log_recovery(task_id, step_index, error_msg, strategy, 0, False)
             return {
                 "status": "failed",
@@ -347,25 +265,15 @@ class TaskExecutor:
                 "need_human": strategy.need_human,
             }
 
-        # 按策略重试
-        max_attempts = strategy.max_retries
-        for attempt in range(1, max_attempts + 1):
-            logger.info(f"[Recovery] 第{attempt}/{max_attempts}次重试...")
-
-            # 指数退避等待
+        for attempt in range(1, strategy.max_retries + 1):
             wait_time = strategy.wait_seconds * (2 ** (attempt - 1))
             if wait_time > 0:
                 logger.info(f"[Recovery] 等待 {wait_time:.1f}秒后重试")
                 await asyncio.sleep(wait_time)
 
-            # 构建修正后的步骤
-            retry_step = recovery.build_retry_context(step, strategy, attempt)
-
-            # 重置可能的错误状态（如浏览器/桌面会话）
             await self._reset_session_if_needed(strategy.error_type, context)
-
-            # 重新执行
-            step_result = await self._execute_step(retry_step, context)
+            step_result = await self._execute_step(
+                recovery.build_retry_context(step, strategy, attempt), context)
 
             if step_result.get("status") == "success":
                 logger.info(f"[Recovery] ✅ 第{attempt}次重试成功")
@@ -373,591 +281,21 @@ class TaskExecutor:
                 return step_result
 
             logger.warning(f"[Recovery] 第{attempt}次重试仍失败: {step_result.get('error', '')}")
-
             if not recovery.should_continue_retry(attempt, strategy):
                 break
 
-        # 所有重试都失败
-        recovery.log_recovery(task_id, step_index, error_msg, strategy, max_attempts, False)
+        recovery.log_recovery(task_id, step_index, error_msg, strategy, strategy.max_retries, False)
         return {
             "status": "failed",
-            "error": f"{error_msg}（已重试{max_attempts}次仍失败）",
+            "error": f"{error_msg}（已重试{strategy.max_retries}次仍失败）",
             "recovery_attempted": True,
             "recovery_diagnosis": strategy.diagnosis,
             "recovery_fix_action": strategy.fix_action,
             "need_human": strategy.need_human,
         }
 
-    async def _reset_session_if_needed(self, error_type, context: Dict):
-        """根据错误类型重置会话状态"""
+    async def _reset_session_if_needed(self, error_type, context: Dict) -> None:
         from src.agent.smart_recovery import ErrorType
         if error_type == ErrorType.LOGIN_EXPIRED:
-            # 登录过期：清除cookie标记，下次会重新登录
             logger.info("[Recovery] 登录过期，清除会话状态")
             context.pop("logged_in", None)
-            # 关闭浏览器让下次重新打开
-            if self.smart_browser:
-                try:
-                    await self.smart_browser.close()
-                    self.smart_browser = None
-                except Exception:
-                    pass
-
-    async def _execute_step(self, step: Dict, context: Dict) -> Dict[str, Any]:
-        """执行单个步骤"""
-        step_type = step.get("type")
-        action = step.get("action")
-        params = step.get("params", {})
-        description = step.get("description", "")
-
-        # 替换参数中的 ${param} 占位符
-        params = self._resolve_params_placeholders(params, context)
-
-        logger.info(f"  类型: {step_type}, 动作: {action}")
-
-        if step_type == "browser":
-            return await self._execute_browser_step(action, params, context)
-        elif step_type == "desktop":
-            return await self._execute_desktop_step(action, params, context)
-        elif step_type == "data":
-            return await self._execute_data_step(action, params, context)
-        elif step_type == "api":
-            return await self._execute_api_step(action, params, context)
-        elif step_type == "deliver":
-            return await self._execute_deliver_step(action, params, context)
-        elif step_type == "notify":
-            return await self._execute_notify_step(action, params, context)
-        else:
-            return {"status": "failed", "error": f"未知步骤类型: {step_type}"}
-
-    async def _execute_desktop_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """
-        执行桌面应用自动化步骤
-
-        支持的action：
-          - start_app:      启动应用并绑定窗口
-          - smart_click:    LLM智能点击（用自然语言描述点哪里）
-          - smart_fill:     LLM智能填写输入框
-          - smart_select:   LLM智能选择下拉框
-          - smart_wait:     LLM智能等待条件满足
-          - smart_export:   LLM智能导出文件
-          - click_button:   按文本点击按钮（原生）
-          - fill_input:     按标签填写输入框（原生）
-          - select_menu:    多级菜单选择（原生）
-          - export_file:    通用导出（原生）
-          - press_key:      按键
-          - wait_window:    等待窗口出现
-          - run_workflow:   调用自定义workflow脚本
-        """
-        # 按需初始化智能桌面（延迟导入，避免未装uiautomation时影响其他任务）
-        if not self.smart_desktop:
-            try:
-                from src.agent.smart_desktop import SmartDesktop
-                self.smart_desktop = SmartDesktop()
-            except ImportError as e:
-                return {"status": "failed", "error": f"桌面自动化模块未安装: {e}"}
-
-        # action=start_app：启动应用
-        if action == "start_app":
-            app_path = params.get("app_path", "")
-            app_name = params.get("app_name", "")
-            wait = params.get("wait_seconds", 5)
-            try:
-                self.smart_desktop.start(app_name=app_name or None)
-                if app_path:
-                    await asyncio.to_thread(self.smart_desktop.desktop.start_app, app_path, "", wait)
-                return {"status": "success", "context": {"desktop_app": app_name or app_path}}
-            except Exception as e:
-                return {"status": "failed", "error": f"启动应用失败: {e}"}
-
-        # action=smart_*：LLM驱动的智能方法
-        elif action == "smart_click":
-            intent = params.get("intent", "")
-            timeout = params.get("timeout", 10)
-            ok = await asyncio.to_thread(self.smart_desktop.smart_click, intent, timeout)
-            return {"status": "success" if ok else "failed", "error": "" if ok else f"智能点击失败: {intent}"}
-
-        elif action == "smart_fill":
-            intent = params.get("intent", "")
-            value = params.get("value", "")
-            timeout = params.get("timeout", 10)
-            ok = await asyncio.to_thread(self.smart_desktop.smart_fill, intent, value, timeout)
-            return {"status": "success" if ok else "failed", "error": "" if ok else f"智能填充失败: {intent}"}
-
-        elif action == "smart_select":
-            intent = params.get("intent", "")
-            value = params.get("value", "")
-            timeout = params.get("timeout", 10)
-            ok = await asyncio.to_thread(self.smart_desktop.smart_select, intent, value, timeout)
-            return {"status": "success" if ok else "failed", "error": "" if ok else f"智能选择失败: {intent}"}
-
-        elif action == "smart_wait":
-            condition = params.get("condition", "")
-            timeout = params.get("timeout", 30)
-            ok = await asyncio.to_thread(self.smart_desktop.smart_wait, condition, timeout)
-            return {"status": "success" if ok else "failed", "error": "" if ok else f"等待超时: {condition}"}
-
-        elif action == "smart_export":
-            intent = params.get("intent", "")
-            save_path = params.get("save_path", "")
-            timeout = params.get("timeout", 60)
-            path = await asyncio.to_thread(self.smart_desktop.smart_export, intent, save_path, timeout)
-            if path:
-                return {"status": "success", "context": {"downloaded_file": path}}
-            return {"status": "failed", "error": f"导出失败: {intent}"}
-
-        # action=原生方法
-        elif action == "click_button":
-            text = params.get("text", "")
-            timeout = params.get("timeout", 5)
-            ok = await asyncio.to_thread(self.smart_desktop.desktop.click_button, text, False, timeout)
-            return {"status": "success" if ok else "failed"}
-
-        elif action == "fill_input":
-            label = params.get("label", "")
-            value = params.get("value", "")
-            ok = await asyncio.to_thread(self.smart_desktop.desktop.fill_input, label, value)
-            return {"status": "success" if ok else "failed"}
-
-        elif action == "select_menu":
-            menu_path = params.get("menu_path", [])
-            if isinstance(menu_path, str):
-                menu_path = [menu_path]
-            ok = await asyncio.to_thread(self.smart_desktop.desktop.select_menu, menu_path)
-            return {"status": "success" if ok else "failed"}
-
-        elif action == "export_file":
-            save_path = params.get("save_path", "")
-            trigger = params.get("trigger_button", "导出")
-            timeout = params.get("timeout", 30)
-            path = await asyncio.to_thread(
-                self.smart_desktop.desktop.export_file, save_path, trigger, True, "保存", timeout
-            )
-            if path:
-                return {"status": "success", "context": {"downloaded_file": path}}
-            return {"status": "failed", "error": "导出失败"}
-
-        elif action == "press_key":
-            key = params.get("key", "Enter")
-            ok = await asyncio.to_thread(self.smart_desktop.desktop.press_key, key)
-            return {"status": "success" if ok else "failed"}
-
-        elif action == "wait_window":
-            title = params.get("title", "")
-            timeout = params.get("timeout", 30)
-            ok = await asyncio.to_thread(self.smart_desktop.desktop.wait_window, title, timeout)
-            return {"status": "success" if ok else "failed", "error": "" if ok else f"窗口未出现: {title}"}
-
-        elif action == "run_workflow":
-            # 桌面任务调用自定义workflow脚本（同browser/api共用此方法）
-            return await self._execute_workflow_step(params, context)
-
-        return {"status": "failed", "error": f"未知桌面动作: {action}"}
-
-    async def _execute_browser_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """执行浏览器步骤"""
-
-        # 按需初始化浏览器
-        if not self.smart_browser:
-            self.smart_browser = SmartBrowser()
-            await self.smart_browser.start(headless=False)
-
-        if action == "navigate":
-            url = params.get("url", "")
-            await self.smart_browser.navigate(url)
-            return {"status": "success", "context": {"current_url": url}}
-
-        elif action == "login":
-            login_url = params.get("url", "")
-            success_hint = params.get("success_hint", "页面显示用户信息")
-            timeout = params.get("timeout", 300)
-
-            if login_url:
-                await self.smart_browser.navigate(login_url)
-
-            success = await self.smart_browser.smart_login(
-                login_url=params.get("url", self.smart_browser.browser.page.url if self.smart_browser.browser.page else ""),
-                success_hint=success_hint,
-                timeout=timeout
-            )
-
-            if success:
-                return {"status": "success"}
-            return {"status": "failed", "error": "登录超时"}
-
-        elif action == "click":
-            intent = params.get("intent", "")
-            timeout = params.get("timeout", 10000)
-            success = await self.smart_browser.smart_click(intent, timeout=timeout)
-            if success:
-                return {"status": "success"}
-            return {"status": "failed", "error": f"点击失败: {intent}"}
-
-        elif action == "download":
-            intent = params.get("intent", "")
-            timeout = params.get("timeout", 60000)
-            file_path = await self.smart_browser.smart_download(intent, timeout=timeout)
-
-            if file_path:
-                return {"status": "success", "context": {"downloaded_file": file_path}}
-            return {"status": "failed", "error": f"下载失败: {intent}"}
-
-        elif action == "wait":
-            condition = params.get("condition", "")
-            timeout = params.get("timeout", 30)
-            success = await self.smart_browser.smart_wait(condition, timeout=timeout)
-            if success:
-                return {"status": "success"}
-            return {"status": "failed", "error": f"等待超时: {condition}"}
-
-        elif action == "fill":
-            intent = params.get("intent", "")
-            value = params.get("value", "")
-            success = await self.smart_browser.smart_fill(intent, value)
-            if success:
-                return {"status": "success"}
-            return {"status": "failed", "error": f"填充失败: {intent}"}
-
-        elif action == "run_workflow":
-            # 浏览器任务调用自定义workflow脚本（如 jd_ibay_self.py）
-            # workflow脚本内部自己管理浏览器操作，不用反复改task_executor
-            return await self._execute_workflow_step(params, context)
-
-        return {"status": "failed", "error": f"未知浏览器动作: {action}"}
-
-    async def _execute_workflow_step(
-        self,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """
-        执行自定义workflow脚本（browser和api类型共用）
-
-        workflow脚本是一个Python模块，提供async def run(...)或async def run_api(...)函数。
-        用户在Web界面填的参数会通过 **user_params 传给该函数。
-        """
-        import sys
-        from pathlib import Path
-        import importlib
-        import inspect
-
-        # 确保项目根目录在path中
-        root = Path(__file__).resolve().parent.parent.parent
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
-
-        workflow_module = params.get("module", "")
-        workflow_func = params.get("function", "run")
-
-        # 参数合并优先级（由低到高）：
-        #   1. yaml里这一步 step.params 写死的值（比如 dingtalk_userid、timeout）
-        #   2. Web界面每次执行填的 context.user_params（用户临时改的东西）
-        # 只拿「不是控制字段(module/function)」的普通参数参与合并
-        step_params = {k: v for k, v in params.items() if k not in ("module", "function")}
-        user_params = dict(step_params)
-        user_params.update(context.get("user_params", {}) or {})
-
-        if not workflow_module:
-            return {"status": "failed", "error": "未指定workflow模块(module)"}
-
-        logger.info(f"  Workflow: 调用 {workflow_module}.{workflow_func}()")
-        logger.info(f"  传参（step.params + user_params 合并）: {user_params}")
-
-        try:
-            mod = importlib.import_module(workflow_module)
-            func = getattr(mod, workflow_func)
-
-            # 调用异步函数，传入用户参数
-            if inspect.iscoroutinefunction(func):
-                result = await func(**user_params)
-            else:
-                result = func(**user_params)
-
-            # result 可能是 (data_list, file_path) 元组，或单个文件路径字符串
-            if isinstance(result, tuple) and len(result) == 2:
-                data_list, file_path = result
-                logger.info(f"  Workflow完成: 获取 {len(data_list) if hasattr(data_list, '__len__') else '?'} 条数据，保存到 {file_path}")
-                return {
-                    "status": "success",
-                    "context": {
-                        "workflow_data_count": len(data_list) if hasattr(data_list, '__len__') else 0,
-                        "downloaded_file": file_path,
-                        "api_output_file": file_path
-                    }
-                }
-            elif isinstance(result, str):
-                logger.info(f"  Workflow完成: 输出文件 {result}")
-                return {
-                    "status": "success",
-                    "context": {
-                        "downloaded_file": result,
-                        "api_output_file": result
-                    }
-                }
-            else:
-                logger.info(f"  Workflow完成: {result}")
-                return {"status": "success", "context": {"workflow_result": str(result)}}
-
-        except Exception as e:
-            logger.error(f"  Workflow失败: {e}")
-            return {"status": "failed", "error": f"Workflow调用失败: {e}"}
-
-    async def _execute_data_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """执行数据处理步骤"""
-
-        if action == "process_data":
-            # 调用 data_clean 模块中的清洗函数
-            import importlib
-            import sys
-            from pathlib import Path
-            
-            module_name = params.get("module", "")
-            function_name = params.get("function", "process")
-            
-            if not module_name:
-                return {"status": "failed", "error": "未指定清洗模块(module)"}
-            
-            # 确保项目根目录在path中
-            root = str(Path(__file__).resolve().parent.parent.parent)
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            
-            # 获取输入文件：优先params指定的，其次context中的
-            input_file = params.get("input_file") or context.get("downloaded_file") or context.get("api_output_file")
-            if not input_file:
-                return {"status": "failed", "error": "没有可清洗的输入文件"}
-            
-            logger.info(f"  数据清洗: {module_name}.{function_name}()")
-            logger.info(f"  输入文件: {input_file}")
-            
-            try:
-                mod = importlib.import_module(module_name)
-                func = getattr(mod, function_name)
-                
-                import inspect
-                kwargs = {
-                    "input_file": input_file,
-                    "context": context,
-                    "params": params,
-                }
-                if inspect.iscoroutinefunction(func):
-                    result = await func(**kwargs)
-                else:
-                    result = func(**kwargs)
-                
-                # result 可以是文件路径字符串，或 (data, file_path) 元组
-                output_file = None
-                if isinstance(result, str):
-                    output_file = result
-                elif isinstance(result, tuple) and len(result) == 2:
-                    output_file = result[1]
-                
-                if output_file:
-                    logger.info(f"  清洗完成，输出: {output_file}")
-                    return {
-                        "status": "success",
-                        "context": {
-                            "processed_file": output_file,
-                            "downloaded_file": output_file  # 更新供交付步骤使用
-                        }
-                    }
-                else:
-                    logger.info(f"  清洗完成")
-                    return {"status": "success", "context": {"data_result": str(result)}}
-                    
-            except Exception as e:
-                logger.error(f"  清洗失败: {e}")
-                return {"status": "failed", "error": f"数据清洗失败: {e}"}
-
-        if action == "process_excel":
-            # 文件路径：优先用参数指定的，其次用上一步下载的
-            file_path = params.get("file_path") or context.get("downloaded_file")
-            if not file_path:
-                return {"status": "failed", "error": "未找到要处理的文件"}
-
-            task_desc = params.get("task_description", "")
-            output_path = params.get("output_path")
-
-            result = self.data_processor.process_excel(
-                file_path=file_path,
-                task_description=task_desc,
-                output_path=output_path
-            )
-
-            if result.get("status") == "success":
-                return {
-                    "status": "success",
-                    "context": {
-                        "data_result": {k: v for k, v in result.items() if k != "data"}
-                    }
-                }
-            return {"status": "failed", "error": result.get("error")}
-
-        return {"status": "failed", "error": f"未知数据动作: {action}"}
-
-    async def _execute_api_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """执行API调用步骤"""
-        if action == "run_workflow":
-            return await self._execute_workflow_step(params, context)
-
-        # 钉钉通知类action也支持在api步骤里用（统一 type: api，不再需要 notify）
-        notify_actions = {
-            "dingtalk_text", "dingtalk", "text",
-            "dingtalk_markdown", "markdown",
-            "send_oto_message", "oto_text", "dingtalk_oto",
-            "send_oto_markdown", "oto_markdown",
-        }
-        if action in notify_actions:
-            return await self._execute_notify_step(action, params, context)
-
-        return {"status": "failed", "error": f"未知API动作: {action}"}
-
-    def set_user(self, user_info: Dict):
-        self._current_user = user_info
-
-    async def _execute_deliver_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        if action == "deliver_file":
-            file_path = params.get("file_path") or context.get("downloaded_file") or context.get("api_output_file")
-            if not file_path:
-                return {"status": "failed", "error": "没有可交付的文件"}
-            
-            username = context.get("username", "")
-            user_config = context.get("user_config", {})
-            template_name = params.get("template_name")
-            if template_name and username:
-                template_path = self.template_manager.get_template_by_name(username, template_name)
-                if template_path:
-                    logger.info(f"  使用模板: {template_name}")
-                    context["template_path"] = str(template_path)
-            
-            channels = params.get("channels")
-            task_name = params.get("task_name", "")
-            defaults = (context or {}).get("_task_defaults", {}) or {}
-            dingtalk_userid = params.get("dingtalk_userid") or defaults.get("dingtalk_userid")
-            result = await self.delivery_service.deliver(
-                file_path=file_path,
-                user_config=user_config,
-                task_name=task_name,
-                channels=channels,
-                dingtalk_userid=dingtalk_userid,
-            )
-            success_ch = [k for k, v in result.items() if isinstance(v, dict) and v.get("success")]
-            failed_ch = [k for k, v in result.items() if isinstance(v, dict) and not v.get("success")]
-            if success_ch:
-                logger.info(f"  交付成功: {', '.join(success_ch)}")
-            if failed_ch:
-                logger.warning(f"  交付失败: {', '.join(failed_ch)}")
-            return {"status": "success", "context": {"deliver_result": result, "delivered_channels": success_ch}}
-        return {"status": "failed", "error": f"未知交付动作: {action}"}
-
-    async def _execute_notify_step(
-        self,
-        action: str,
-        params: Dict,
-        context: Dict
-    ) -> Dict[str, Any]:
-        """
-        执行通知步骤（两种机器人，按 action 区分）：
-
-        【群聊 Webhook 机器人】 —— 任务通知/告警，发在群里：
-          - dingtalk_text / dingtalk / text
-              params: {message, at_mobiles:[], at_all:bool}
-          - dingtalk_markdown / markdown
-              params: {title, text, at_mobiles:[], at_all:bool}
-
-        【自建应用单聊机器人】 —— 给具体用户发 1 对 1 文字通知：
-          - send_oto_message / oto_text / dingtalk_oto
-              params: {dingtalk_userid, message}                # 纯文本
-          - send_oto_markdown / oto_markdown
-              params: {dingtalk_userid, title, text}            # Markdown
-
-        【默认】 —— 仅写日志，兼容历史 notify 步骤
-        """
-        message = params.get("message", "任务通知")
-        logger.info(f"📢 通知(action={action}): {message}")
-
-        # --------- 群聊 Webhook 机器人 ---------
-        try:
-            if action in ("dingtalk_text", "dingtalk", "text"):
-                if not (self._dingtalk and self._dingtalk.enabled):
-                    return {"status": "success", "skipped": True, "warning": "群聊Webhook未配置(notifications.dingtalk.webhook)，仅输出日志"}
-                res = self._dingtalk.send_text(
-                    content=message,
-                    at_mobiles=params.get("at_mobiles"),
-                    at_all=bool(params.get("at_all", False)),
-                )
-                if res.get("success") or res.get("skipped"):
-                    return {"status": "success", "context": {"dingtalk_webhook_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉群聊发送失败")}
-
-            if action in ("dingtalk_markdown", "markdown"):
-                if not (self._dingtalk and self._dingtalk.enabled):
-                    return {"status": "success", "skipped": True, "warning": "群聊Webhook未配置(notifications.dingtalk.webhook)，仅输出日志"}
-                title = params.get("title") or "智能体平台通知"
-                text = params.get("text") or message
-                res = self._dingtalk.send_markdown(
-                    title=title, text=text,
-                    at_mobiles=params.get("at_mobiles"),
-                    at_all=bool(params.get("at_all", False)),
-                )
-                if res.get("success") or res.get("skipped"):
-                    return {"status": "success", "context": {"dingtalk_webhook_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉群聊发送失败")}
-
-            # --------- 自建应用单聊机器人 ---------
-            if action in ("send_oto_message", "oto_text", "dingtalk_oto"):
-                defaults = (context or {}).get("_task_defaults", {}) or {}
-                userid = (params.get("dingtalk_userid") or defaults.get("dingtalk_userid") or "").strip()
-                if not userid:
-                    return {"status": "failed", "error": "缺少 dingtalk_userid（step.params 或 yaml 顶层 dingtalk_userid）"}
-                if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
-                    return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
-                res = self._dingtalk_robot.send_text(content=message, userid=userid)
-                if res.get("success"):
-                    return {"status": "success", "context": {"dingtalk_oto_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉单聊文本发送失败")}
-
-            if action in ("send_oto_markdown", "oto_markdown"):
-                defaults = (context or {}).get("_task_defaults", {}) or {}
-                userid = (params.get("dingtalk_userid") or defaults.get("dingtalk_userid") or "").strip()
-                if not userid:
-                    return {"status": "failed", "error": "缺少 dingtalk_userid（step.params 或 yaml 顶层 dingtalk_userid）"}
-                if not (self._dingtalk_robot and self._dingtalk_robot.enabled):
-                    return {"status": "failed", "error": "单聊机器人未配置(delivery.dingtalk.app_key/app_secret)"}
-                title = params.get("title") or "通知"
-                text = params.get("text") or message
-                res = self._dingtalk_robot.send_markdown(title=title, text=text, userid=userid)
-                if res.get("success"):
-                    return {"status": "success", "context": {"dingtalk_oto_result": res}}
-                return {"status": "failed", "error": res.get("error", "钉钉单聊Markdown发送失败")}
-
-            # --------- 默认：仅写日志 ---------
-            return {"status": "success"}
-        except Exception as e:
-            logger.warning(f"通知步骤执行异常(不影响主流程): {e}")
-            return {"status": "failed", "error": str(e)}
