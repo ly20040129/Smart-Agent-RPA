@@ -75,18 +75,38 @@ agent:
     timeout: 300
     notification_on_wait: true
 
-# ==================== 具体流程配置 ====================
+# ==================== 外部数据库（业务外部库，与本地 storage.mysql 区分）====================
+# mysql_pro：短信验证码转存库，登录流程轮询读取验证码
+mysql_pro:
+  host: "your-external-db.example.com"
+  port: 3306
+  user: "your_user"
+  password: "your_password"
+  database: "your_db"
+  charset: "utf8mb4"
+
+# ==================== 各工作流配置（账号密码不在这里，存 shop_accounts 表）====================
 workflows:
-  wechat_pay_billing:
-    enabled: true
-    schedule: "0 9 * * 1"
-    description: "公众号资金账单获取与处理"
-    wechat_pay_url: "https://pay.weixin.qq.com/"
-    output_template: "data/templates/公众号销售额模板.xlsx"
-  tmall_warehouse:
-    enabled: false
-    schedule: "0 10 1,15 * *"
-    description: "天猫保税仓销售出库明细导入金蝶"
+  jd_sz_compete:
+    ding_userids:
+      - "your_dingtalk_userid"
+    headers:                             # 商智接口固定请求头
+      user-mnp: "your_user_mnp"
+      user-mup: "your_user_mup"
+      uuid: "your_uuid"
+
+  tm_video_up:
+    local_path: "D:\\TEST"
+    ftp:
+      host: "192.168.1.100"
+      port: 21
+      user: "your_ftp_user"
+      password: "your_ftp_password"
+    aitable:
+      operator_id: "your_operator_id"
+      base_id: "your_base_id"
+      sheet_name: "数据表"
+
 
 # ==================== 存储配置 ====================
 storage:
@@ -131,11 +151,11 @@ delivery:
   default_channels:
     - "local"
     - "dingtalk"
-  
+
   dingtalk:
-    # 自建应用机器人（发文件）
-    app_key: "your_dingtalk_app_key"           # 自建应用的 AppKey
-    app_secret: "your_dingtalk_app_secret"     # 自建应用的 AppSecret
+    # 自建应用机器人：单聊发文件 + 钉钉多维表（共用同一个 app_key/app_secret）
+    app_key: "your_dingtalk_app_key"
+    app_secret: "your_dingtalk_app_secret"
     agent_id: 4806132268
     # 或者直接用 Webhook + 加签（如果是企业内机器人）
     # webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxx"

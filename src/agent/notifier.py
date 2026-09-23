@@ -9,8 +9,8 @@ from typing import Dict, Optional
 
 from loguru import logger
 
-from src.agent.dingtalk_robot import DingtalkRobot, build_robot
-from src.agent.dingtalk_webhook import DingtalkWebhook, build_webhook
+from sdk.dingtalk_robot import DingtalkRobot, build_robot
+from sdk.dingtalk_webhook import DingtalkWebhook, build_webhook
 
 
 class Notifier:
@@ -56,6 +56,20 @@ class Notifier:
         return self._dispatch(
             "单聊", "文件", userid,
             lambda: self.robot.send_file(file_path, userid),
+        )
+
+    # ---- 企业内部应用机器人：群聊 ----
+
+    def send_robot_group_text(self, content: str, open_conversation_id: str, robot_code: str = "") -> Dict:
+        return self._dispatch(
+            "群聊(应用机器人)", "文本", open_conversation_id,
+            lambda: self.robot.send_group_text(content, open_conversation_id, robot_code),
+        )
+
+    def send_robot_group_file(self, file_path: str, open_conversation_id: str, robot_code: str = "") -> Dict:
+        return self._dispatch(
+            "群聊(应用机器人)", "文件", open_conversation_id,
+            lambda: self.robot.send_group_file(file_path, open_conversation_id, robot_code),
         )
 
     # ---- 任务三态通知 ----

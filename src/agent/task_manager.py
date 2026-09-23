@@ -71,45 +71,19 @@ class TaskManager:
         Args:
             task_config: 任务配置
                 {
-                    "name": "任务名称",
-                    "description": "任务描述",
+                    "name": "京东商智竞品数据统计",
+                    "description": "通过API接口获取京东商智竞品统计数据",
+                    "department": "operations",
                     "enabled": true,
-                    "schedule": "0 9 * * 1",
-                    "steps": [
-                        {
-                            "type": "browser",        # browser/data/notify
-                            "action": "navigate",     # navigate/click/download/wait/fill
-                            "description": "打开微信支付登录页",
-                            "params": {"url": "https://pay.weixin.qq.com/"}
-                        },
-                        {
-                            "type": "browser",
-                            "action": "login",
-                            "description": "等待用户扫码登录",
-                            "params": {"success_hint": "页面显示账号信息", "timeout": 300}
-                        },
-                        {
-                            "type": "browser",
-                            "action": "click",
-                            "description": "进入交易中心",
-                            "params": {"intent": "点击交易中心菜单"}
-                        },
-                        {
-                            "type": "browser",
-                            "action": "download",
-                            "description": "下载业务明细账单",
-                            "params": {"intent": "下载业务明细账单"}
-                        },
-                        {
-                            "type": "data",
-                            "action": "process_excel",
-                            "description": "处理账单数据，计算销售额和退款额",
-                            "params": {
-                                "task_description": "找出收支类型为收入的销售额，以及退款和手续费的退款额",
-                                "output_path": "data/output/处理结果.xlsx"
-                            }
-                        }
-                    ]
+                    "mode": "api",
+                    "cookie_key": "jd_shangzhi",
+                    "workflow_module": "workflows.jd_shangzhi_jingp_data",
+                    "workflow_func": "jd_shangzhi_jingp_data",
+                    "params_input": [
+                        {"key": "date_str", "label": "查询日期", "required": true, "type": "date"},
+                        {"key": "output_dir", "label": "保存位置", "required": true, "type": "path"}
+                    ],
+                    "schedule": ""
                 }
 
         Returns:
@@ -194,3 +168,8 @@ class TaskManager:
 
         with open(history_file, 'r', encoding='utf-8') as f:
             return json.load(f)
+
+
+# 模块级单例：全项目共用一个（TaskManager 本身无状态，只持有目录路径）。
+# api.py 与 task_executor.py 都从这里取，避免各建一个实例造成认知负担。
+task_manager = TaskManager()

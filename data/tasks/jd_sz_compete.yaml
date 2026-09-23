@@ -1,0 +1,22 @@
+name: 京东商智竞品数据统计
+description: 登录京东商家后台，调商智API抓竞品每日排名，填模板表格存MySQL，钉钉发文件
+department: admin
+enabled: true
+schedule: ''
+mode: api
+cookie_key: jd_shangzhi
+workflow_module: workflows.jd_sz_compete
+workflow_func: run
+params_input:
+- key: date
+  label: 统计日期
+  type: text
+  required: false
+  help: 留空默认昨天，格式 2026-09-21
+- key: excel_path
+  label: 模板文件
+  type: file
+  required: false
+  help: 留空默认
+deliver_channels:
+- local

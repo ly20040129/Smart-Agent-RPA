@@ -1,8 +1,11 @@
-from sdk.local_config import LocalConfig
-from sdk.browser_sdk import Browser, Cookie
-from sdk.cookie_manager import cookie_manager
-from sdk.mysql_sdk import MySQL
-from sdk.excel_sdk import ExcelClean
-from sdk.chart_sdk import Chart
+# -*- coding: utf-8 -*-
+"""
+基础设施层 SDK 包
 
-__all__ = ["LocalConfig", "Browser", "Cookie", "cookie_manager", "MySQL", "ExcelClean", "Chart"]
+各子模块独立导入，本包不做聚合导出，避免 import 链副作用。
+直接从子模块导入即可：
+    from sdk.cookie_manager import cookie_manager
+    from sdk.mysql_sdk import MySQL
+    from sdk.data_tools import save_output
+    from sdk.browser_sdk import Browser
+"""

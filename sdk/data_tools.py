@@ -259,8 +259,8 @@ def get_dominant_month_end(df: pd.DataFrame, date_col: str = "业务日期") -> 
 
     if len(dates) > 0:
         months = dates.apply(lambda x: (x.year, x.month))
-        best = months.value_counts().idxmax()
-        year, month = best
+        best_idx = months.value_counts().idxmax()
+        year, month = int(best_idx[0]), int(best_idx[1])
         last_day = calendar.monthrange(year, month)[1]
         return datetime(year, month, last_day).strftime("%Y-%m-%d")
 

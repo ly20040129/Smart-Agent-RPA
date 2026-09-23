@@ -69,9 +69,9 @@ def register_entity(table_name: str):
     return decorator
 
 
-def get_entity(table_name: str):
-    """获取已注册的实体类"""
-    return _ENTITIES.get(table_name)
+def get_entity(table_name: str) -> type:
+    """获取已注册的实体类（未注册时抛出 KeyError）"""
+    return _ENTITIES[table_name]
 
 
 def list_entities():

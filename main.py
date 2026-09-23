@@ -9,8 +9,13 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-import asyncio
 from loguru import logger
+
+from src.core.output_encoding import setup_output_encoding
+from src.core.logging_setup import setup_logging
+
+setup_output_encoding()  # 输出编码全项目只在这里定一次，见 src/core/output_encoding.py
+setup_logging()  # 日志落盘全项目只在这里定一次，见 src/core/logging_setup.py
 
 from src.core.config import get_config
 from src.web.api import start_server
@@ -45,50 +50,5 @@ def main():
         raise
 
 
-def run_cli():
-    """
-    命令行接口 - 直接执行工作流（不启动Web服务器）
-    """
-    import sys
-    
-    if len(sys.argv) < 2:
-        print("使用方法:")
-        print("  python main.py cli wechat_pay_billing")
-        print("  python main.py web")
-        return
-    
-    command = sys.argv[1]
-    
-    if command == "wechat_pay_billing":
-        # 直接执行公众号账单流程
-        async def run_workflow():
-            workflow = WeChatPayBillingWorkflow()
-            result = await workflow.execute()
-            
-            print("\n执行结果:")
-            print(f"状态: {result['status']}")
-            
-            if result['status'] == 'success':
-                print(f"销售额: {result['sales_amount']}")
-                print(f"退款额: {result['refund_amount']}")
-                print(f"输出文件: {result['output_path']}")
-            else:
-                print(f"错误: {result['error']}")
-        
-        asyncio.run(run_workflow())
-    
-    elif command == "web":
-        # 启动Web服务器
-        main()
-    
-    else:
-        print(f"未知命令: {command}")
-
-
 if __name__ == "__main__":
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "cli":
-        run_cli()
-    else:
-        main()
+    main()

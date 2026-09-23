@@ -194,26 +194,6 @@ class CookieManager:
             logger.error(f"抓取cookie失败: {e}")
             return False
 
-    def capture_from_drissionpage(self, page, key: str, logged_in: bool = None) -> bool:
-        """从DrissionPage抓取（PDD脚本用）"""
-        try:
-            raw = page.cookies(all_domains=True) if hasattr(page, 'cookies') else []
-            cookies = [{"name": c.get("name", ""), "value": c.get("value", ""),
-                        "domain": c.get("domain", ""), "path": c.get("path", "/")}
-                       for c in raw if isinstance(c, dict)]
-            if not cookies:
-                return False
-            if logged_in is None:
-                logged_in = self._is_logged_in(cookies, key)
-            if not logged_in:
-                logger.info(f"[Cookie] {key}: 未登录，跳过保存")
-                return False
-            filtered = self._filter(cookies, key)
-            return self._save_to_redis(key, filtered)
-        except Exception as e:
-            logger.error(f"抓取cookie失败(DrissionPage): {e}")
-            return False
-
     # ---- 登录检测 ----
 
     # 关键鉴权 cookie 的最小长度，防止值是 "1"/"placeholder"/"true" 这种占位
@@ -387,9 +367,21 @@ class CookieManager:
         """占用某账号的cookie，防止并发使用同一账号。owner 一般传 task_id/job_id。"""
         if not storage_manager.is_redis_available:
             return True
+        # 同一 owner 重复获取视为已持有：编排层拿到锁之后，扩展代码再取一次不应失败
+        if self.current_user(key) == owner:
+            return True
         if not storage_manager.acquire_lock(self._USE_LOCK_PREFIX + key, timeout):
             current = self.current_user(key)
             logger.warning(f"[Cookie] {key}: 正被 {current or '其他任务'} 使用，{owner} 等待中")
+            # 僵尸锁检测：owner 对应的任务锁已不存在，说明任务已结束，强制释放
+            if self._is_zombie_lock(key, current):
+                logger.info(f"[Cookie] {key}: 检测到僵尸锁(owner={current})，强制释放")
+                self._force_release(key, current)
+                # 释放后重试获取
+                if storage_manager.acquire_lock(self._USE_LOCK_PREFIX + key, timeout):
+                    storage_manager.redis.set(self._USE_OWNER_PREFIX + key, owner, expire=timeout)
+                    logger.info(f"[Cookie] {key}: 僵尸锁清理后重新分配给 {owner}")
+                    return True
             return False
         storage_manager.redis.set(self._USE_OWNER_PREFIX + key, owner, expire=timeout)
         logger.info(f"[Cookie] {key}: 已分配使用锁给 {owner}")
@@ -411,6 +403,27 @@ class CookieManager:
         if not storage_manager.is_redis_available:
             return ""
         return storage_manager.redis.get(self._USE_OWNER_PREFIX + key, "") or ""
+
+    def _is_zombie_lock(self, key: str, owner: str) -> bool:
+        """判断 cookie 使用锁是否为僵尸锁（owner 对应的任务已结束）"""
+        if not owner or not storage_manager.is_redis_available:
+            return False
+        # owner 是 job_id 或 task_id，检查对应的任务锁是否还存在
+        task_lock_name = f"task:{owner}"
+        lock_key = storage_manager.redis._key(f"lock:{task_lock_name}")
+        exists = storage_manager.redis.client.exists(lock_key)
+        if not exists:
+            logger.info(f"[Cookie] 僵尸锁检测: owner={owner}, 任务锁 {task_lock_name} 不存在")
+            return True
+        return False
+
+    def _force_release(self, key: str, owner: str):
+        """强制释放僵尸锁（跳过 owner 校验）"""
+        if not storage_manager.is_redis_available:
+            return
+        storage_manager.redis.delete(self._USE_OWNER_PREFIX + key)
+        storage_manager.release_lock(self._USE_LOCK_PREFIX + key)
+        logger.info(f"[Cookie] {key}: 强制释放僵尸锁(原owner={owner})")
 
     # ---- 内部方法 ----
 

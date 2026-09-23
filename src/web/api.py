@@ -26,7 +26,8 @@ from pydantic import BaseModel
 from loguru import logger
 
 from src.core.config import get_config
-from src.agent.task_manager import TaskManager
+from src.core.logging_setup import setup_logging
+from src.agent.task_manager import task_manager
 from src.agent.task_executor import TaskExecutor
 from src.agent.task_queue import get_task_queue_manager, JobStatus
 from src.auth import auth_manager
@@ -35,19 +36,35 @@ from src.storage import storage_manager
 app = FastAPI(title="智能体平台", version="3.0.0")
 config = get_config()
 
-# ==================== 启动时自动注册实体类和平台工具类 ====================
+# ==================== 启动时注册实体类 ====================
 @app.on_event("startup")
 async def _init_registries():
     from sdk.entities import init_entities
-    from sdk.platforms import init_platforms
     init_entities()
-    init_platforms()
 
     # 启动持久化调度器（借鉴 bull.ts：重启后自动恢复定时任务）
     from src.agent.scheduler import TaskScheduler
     app.state.scheduler = TaskScheduler()
     await app.state.scheduler.start()
     logger.info("持久化调度器已启动")
+
+    # 启动定时清理任务（每天凌晨 3 点清理 30 天前的文件）
+    from src.utils.cleanup import cleanup_expired_files
+    async def _cleanup_loop():
+        import datetime as _dt
+        while True:
+            now = _dt.datetime.now()
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target = target + _dt.timedelta(days=1)
+            wait_sec = (target - now).total_seconds()
+            await asyncio.sleep(wait_sec)
+            try:
+                cleanup_expired_files()
+            except Exception as e:
+                logger.error(f"[Cleanup] 定时清理异常: {e}")
+    app.state.cleanup_task = asyncio.create_task(_cleanup_loop())
+    logger.info("定时清理任务已启动（每天 03:00）")
 
 
 @app.on_event("shutdown")
@@ -87,7 +104,11 @@ class TaskCreateRequest(BaseModel):
     description: str = ""
     schedule: str = ""
     department: str = ""
-    steps: List[Dict[str, Any]] = []
+    cookie_key: str = ""
+    mode: str = "api"
+    workflow_module: str = ""
+    workflow_func: str = "run"
+    params_input: List[Dict[str, Any]] = []
 
 class TaskUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -95,7 +116,11 @@ class TaskUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
     schedule: Optional[str] = None
     department: Optional[str] = None
-    steps: Optional[List[Dict[str, Any]]] = None
+    cookie_key: Optional[str] = None
+    mode: Optional[str] = None
+    workflow_module: Optional[str] = None
+    workflow_func: Optional[str] = None
+    params_input: Optional[List[Dict[str, Any]]] = None
 
 class LoginRequest(BaseModel):
     username: str
@@ -165,12 +190,11 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-task_manager = TaskManager()
 task_queue = get_task_queue_manager(max_concurrent=5)  # 最多同时跑 5 个任务
 
-# ==================== 模板管理 ====================
-from src.agent.template_manager import TemplateManager
-template_mgr = TemplateManager()
+# # ==================== 模板管理 ====================
+# from src.agent.template_manager import TemplateManager
+# template_mgr = TemplateManager()
 
 
 # ==================== 挂载静态文件（CSS/JS/HTML 资源）====================
@@ -310,7 +334,7 @@ async def create_task(req: TaskCreateRequest, user: dict = Depends(require_auth)
         "schedule": req.schedule,
         "department": req.department or user.get("department", ""),
         "enabled": True,
-        "steps": req.steps
+        "workflow_module": req.workflow_module, "workflow_func": req.workflow_func, "cookie_key": req.cookie_key, "mode": req.mode, "params_input": req.params_input
     }
     task_id = task_manager.create_task(task_config)
     
@@ -352,6 +376,20 @@ async def toggle_task(task_id: str, user: dict = Depends(require_auth)):
         raise HTTPException(404, "任务不存在")
     task = task_manager.get_task(task_id)
     return {"status": "success", "enabled": task.get("enabled")}
+
+
+@app.post("/api/tasks/{task_id}/reload")
+async def reload_task(task_id: str, user: dict = Depends(require_auth)):
+    """手动热更新指定任务的 workflow 模块（改完代码不重启服务即可生效）"""
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    module_name = task.get("workflow_module", "")
+    if not module_name:
+        raise HTTPException(400, "任务配置缺少 workflow_module")
+    from src.agent.task_executor import reload_workflow
+    result = reload_workflow(module_name)
+    return result
 
 class RunTaskRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
@@ -576,36 +614,6 @@ async def insert_table_data(table_name: str, data: dict, user: dict = Depends(re
 
 
 
-# ==================== 用户配置API ====================
-from src.storage import user_config_manager as ucm
-from fastapi import UploadFile, File, Form
-
-@app.get("/api/my-config")
-async def get_my_config(user: dict = Depends(require_auth)):
-    """获取当前用户的配置（带schema信息，给前端渲染表单）"""
-    groups = ucm.get_user_config_with_schema(user["username"])
-    return {"groups": groups, "username": user["username"]}
-
-@app.post("/api/my-config")
-async def save_my_config(data: dict, user: dict = Depends(require_auth)):
-    """保存当前用户的配置（批量）"""
-    items = data.get("items", {})
-    ucm.batch_set_user_config(user["username"], items)
-    return {"status": "success", "saved": len(items)}
-
-@app.post("/api/my-config/upload")
-async def upload_config_file(
-    key: str = Form(...),
-    file: UploadFile = File(...),
-    user: dict = Depends(require_auth),
-):
-    """上传一个文件作为配置值（如Excel模板），返回保存后的路径"""
-    content = await file.read()
-    saved_path = ucm.save_uploaded_file(
-        user["username"], key, content, file.filename
-    )
-    return {"status": "success", "path": saved_path, "filename": file.filename}
-
 # ==================== WebSocket ====================
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -618,52 +626,33 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 
-# ==================== 模板管理API ====================
-@app.get("/api/templates")
-async def list_templates(user=Depends(require_auth)):
-    """列出当前用户的模板"""
-    templates = template_mgr.list_templates(user["username"])
-    return {"templates": templates}
+# ==================== 能力目录 ====================
+@app.get("/api/abilities")
+async def get_abilities(user: dict = Depends(require_auth)):
+    """能力目录：列出所有可用的 workflow 函数"""
+    import importlib
+    import inspect
+    from pathlib import Path
 
-@app.post("/api/templates/upload")
-async def upload_template(
-    file: UploadFile = File(...),
-    name: str = Form(...),
-    description: str = Form(""),
-    template_type: str = Form("excel"),
-    user=Depends(require_auth)
-):
-    """上传模板"""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
-    try:
-        result = template_mgr.upload_template(
-            username=user["username"],
-            name=name,
-            file_path=tmp_path,
-            description=description,
-            template_type=template_type
-        )
-        return {"status": "success", "template": result}
-    finally:
-        os.unlink(tmp_path)
+    workflows = {}
+    wf_dir = Path(__file__).resolve().parent.parent.parent / "workflows"
+    for py_file in wf_dir.glob("*.py"):
+        if py_file.name.startswith("_"):
+            continue
+        mod_name = f"workflows.{py_file.stem}"
+        try:
+            mod = importlib.import_module(mod_name)
+            funcs = []
+            for name, obj in inspect.getmembers(mod, inspect.isfunction):
+                if not name.startswith("_") and name != "run":
+                    sig = str(inspect.signature(obj))
+                    funcs.append({"name": name, "signature": sig, "doc": (obj.__doc__ or "").strip()})
+            if funcs:
+                workflows[mod_name] = funcs
+        except Exception as e:
+            workflows[mod_name] = {"error": str(e)}
 
-@app.delete("/api/templates/{template_id}")
-async def delete_template(template_id: str, user=Depends(require_auth)):
-    """删除模板"""
-    success = template_mgr.delete_template(user["username"], template_id)
-    if success:
-        return {"status": "success"}
-    raise HTTPException(404, "模板不存在")
-
-@app.get("/api/templates/{template_id}/download")
-async def download_template(template_id: str, user=Depends(require_auth)):
-    """下载模板文件"""
-    path = template_mgr.get_template_path(user["username"], template_id)
-    if not path:
-        raise HTTPException(404, "模板不存在")
-    return FileResponse(str(path), filename=path.name)
+    return {"workflows": workflows}
 
 
 # ==================== 文件浏览器 ====================
@@ -741,6 +730,7 @@ async def browse_files(
 # ==================== 启动 ====================
 def start_server():
     import uvicorn
+    setup_logging()  # 兜底：不管从哪个入口起服务都保证日志落盘（重复调用无副作用）
     uvicorn.run("src.web.api:app", host=config.web.host, port=config.web.port, reload=config.web.reload)
 
 

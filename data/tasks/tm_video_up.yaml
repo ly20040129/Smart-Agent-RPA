@@ -1,0 +1,10 @@
+cookie_key: tm_video_up
+department: admin
+description: 天猫视频自动上传
+enabled: true
+mode: browser
+name: 天猫视频自动上传
+workflow_module: workflows.tm_video_up
+workflow_func: tm_video_upload
+params_input: []
+schedule: ''

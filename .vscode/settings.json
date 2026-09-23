@@ -1,3 +1,12 @@
 {
-    "Codegeex.RepoIndex": true
+    "Codegeex.RepoIndex": true,
+    "python.analysis.extraPaths": [
+        "E:\\smart-agent-rpa"
+    ],
+    "python.autoComplete.extraPaths": [
+        "E:\\smart-agent-rpa"
+    ],
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "python.languageServer": "Pylance"
 }

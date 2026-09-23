@@ -144,11 +144,18 @@ def save_uploaded_file(username: str, key_path: str, file_content: bytes,
     # 返回绝对路径（代码里直接用）
     abs_path = str(save_path.resolve())
 
-    # 同时记录到用户配置
+    # 一次读写落盘：uploaded_files 记来源，values 让 get_user_config 能直接读到。
+    # 注意别拆成两次读改写：下面那步会重新从盘上读，把 uploaded_files 覆盖掉，
+    # 导致前端「✓ 已上传」的标记始终不亮。
     config = _load_user_config(username)
     config.setdefault("uploaded_files", {})[key_path] = abs_path
-    # 也写入values，这样 get_user_config 能直接读到
-    batch_set_user_config(username, {key_path: abs_path})
+    values = config.setdefault("values", {})
+    keys = key_path.split(".")
+    cur = values
+    for k in keys[:-1]:
+        cur = cur.setdefault(k, {})
+    cur[keys[-1]] = abs_path
+    _save_user_config(username, config)
 
     return abs_path
 

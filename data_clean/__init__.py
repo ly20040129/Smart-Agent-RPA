@@ -6,13 +6,14 @@
 新增任务只需新增一个文件，不需要修改已有代码。
 
 清洗函数接口约定：
-  输入：input_file（上一步生成的文件路径）+ 可选的 context（上下文数据）+ 可选的 params（额外参数）
-  输出：output_file（清洗后的文件路径）或 (data, output_file) 元组
-
-示例YAML调用：
-  - type: data
-    action: process_data
-    params:
-      module: data_clean.jd_ibay_sales
-      function: process
+  输入：input_file（原始文件路径）+ context（上下文字典，含 user_params 等）
+  输出：清洗后的文件路径（str）
 """
+
+import sys
+from pathlib import Path
+
+# 自动把项目根目录加入 sys.path，确保 `from sdk.xxx import ...` 等导入正常工作
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))

@@ -37,7 +37,7 @@
         </div>
         <div style="display:flex;gap:10px;">
             <button class="btn" style="background:#16a085;" onclick="openCookieModal()">🍪 Cookie管理</button>
-            <button class="btn" style="background:#16a085;" onclick="openConfigModal()">⚙️ 我的配置</button>
+            <!-- <button class="btn" style="background:#16a085;" onclick="openConfigModal()">⚙️ 我的配置</button> -->
             <button class="btn btn-admin" id="btn-user-mgr" onclick="openUserModal()">👥 用户管理</button>
             <button class="btn btn-admin" id="btn-deps-mgr" onclick="openDepsModal()">🔧 系统依赖</button>
             <button class="btn" onclick="openCreateModal()">+ 新增任务</button>
@@ -132,7 +132,7 @@
     </div>
 </div>
 
-<!-- 我的配置弹窗 -->
+<!-- 我的配置弹窗
 <div class="modal-overlay" id="config-modal-overlay" onclick="closeConfigModal()"></div>
 <div class="modal" id="config-modal" style="width:700px;">
     <h2>⚙️ 我的配置</h2>
@@ -187,9 +187,9 @@
         <button class="btn btn-success" onclick="saveMyConfig()">💾 保存配置</button>
         <button class="btn btn-warning" onclick="closeConfigModal()">关闭</button>
     </div>
-</div>
+</div> -->
 
-<!-- 模板中心弹窗 -->
+<!-- 模板中心弹窗
 <div class="modal-overlay" id="template-modal-overlay" onclick="closeTemplateModal()"></div>
 <div class="modal" id="template-modal" style="width:700px;">
     <h2>📁 模板中心</h2>
@@ -231,7 +231,7 @@
     <div style="display:flex;gap:10px;margin-top:20px;">
         <button class="btn btn-warning" onclick="closeTemplateModal()">关闭</button>
     </div>
-</div>
+</div> -->
 
 <!-- Cookie管理弹窗 -->
 <div class="modal-overlay" id="cookie-modal-overlay" onclick="closeCookieModal()"></div>
@@ -299,7 +299,7 @@
 
 <script src="/static/assets/app.js?v=20260829"></script>
 <script src="/static/assets/tasks.js?v=20260904"></script>
-<script src="/static/assets/config.js?v=20260829"></script>
+<!-- <script src="/static/assets/config.js?v=20260829"></script> -->
 <script src="/static/assets/cookies.js?v=20260829"></script>
 <script src="/static/assets/chat.js?v=20260829"></script>
 <script>init();</script>

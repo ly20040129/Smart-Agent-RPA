@@ -1,0 +1,37 @@
+{
+    "include": [
+        "workflows",
+        "src",
+        "sdk",
+        "data_clean"
+    ],
+    "extraPaths": [
+        "."
+    ],
+    "venvPath": ".",
+    "pythonVersion": "3.10",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": false,
+    "reportMissingModuleSource": false,
+    "reportUnknownParameterType": false,
+    "reportUnknownArgumentType": false,
+    "reportUnknownMemberType": false,
+    "reportUnknownVariableType": false,
+    "reportMissingTypeStubs": false,
+    "reportUntypedFunctionDecorator": false,
+    "reportUntypedClassDecorator": false,
+    "reportUntypedBaseClass": false,
+    "reportUntypedNamedTuple": false,
+    "reportIncompatibleMethodOverride": false,
+    "reportIncompatibleVariableOverride": false,
+    "reportCallIssue": false,
+    "reportArgumentType": false,
+    "reportAttributeAccessIssue": false,
+    "reportOptionalMemberAccess": false,
+    "reportOptionalSubscript": false,
+    "reportOptionalCall": false,
+    "reportOptionalOperand": false,
+    "reportIndexIssue": false,
+    "reportAssignmentType": false,
+    "reportReturnType": false
+}
