@@ -69,9 +69,9 @@ class StorageManager:
         else:
             logger.info("存储模块: Redis未启用")
 
-        # 初始化MySQL
-        if storage_config.get('mysql', {}).get('enabled', False):
-            mysql_cfg = storage_config['mysql']
+        # 初始化MySQL（兼容 mysql / mysql_local 两种命名）
+        mysql_cfg = storage_config.get('mysql') or storage_config.get('mysql_local') or {}
+        if mysql_cfg.get('enabled', False):
             self._mysql = MySQLManager(
                 host=mysql_cfg.get('host', 'localhost'),
                 port=mysql_cfg.get('port', 3306),
