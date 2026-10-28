@@ -105,7 +105,7 @@ smart-agent-rpa/
 
 ### 2. 安装依赖
 ```bash
-git clone https://github.com/your-username/smart-agent-rpa.git
+git clone https://gitee.com/luoyong0129/smart-agent-rpa.git
 cd smart-agent-rpa
 pip install -r requirements.txt
 playwright install chromium
