@@ -44,6 +44,12 @@ pymysql>=1.1.1
 aiomysql>=0.2.0
 
 # ==================== SDK 依赖 ====================
+# 钉钉审单卡片机器人（dingtalk_audit_bot 子模块，Stream 长连接 + 卡片 API）
+dingtalk-stream>=0.24.3
+alibabacloud-dingtalk>=2.2.65
+alibabacloud-tea-openapi>=0.4.6
+alibabacloud-tea-util>=0.3.15
+
 matplotlib>=3.5
 pyjwt>=2.6
 bcrypt>=4.0
