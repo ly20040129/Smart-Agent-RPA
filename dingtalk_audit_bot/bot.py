@@ -246,8 +246,14 @@ class CardCallbackHandler(dingtalk_stream.CallbackHandler):
         if "confirm_audit" not in str(action) or task["status"] != "pending":
             return AckMessage.STATUS_OK, "OK"
         shops = _selected_shops(params) or task["shops"]
+        
+        # 【新增】强制带上固定店铺，并去重
+        FIXED_SHOP = "添美办公跨境供货商"
+        if FIXED_SHOP not in shops:
+            shops.append(FIXED_SHOP)
+
         if not shops:
-            # 下拉变更回调可能丢失（Stream 重连或重复起进程），记录下来方便排查
+            # 如果连强制加的都没有（理论上不可能），才报错
             logger.warning(f"[Card] 确认时没有店铺，回调原始数据: {data}")
             await update_card(task_id, [], "未收到你的选择，请重新勾选后再点「确认执行」")
             return AckMessage.STATUS_OK, "OK" 
